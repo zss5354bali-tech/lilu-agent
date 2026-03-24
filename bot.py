@@ -1,156 +1,156 @@
 import logging
 import os
 import httpx
-import json
-from telegram import Update
-from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
+import base64
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-OWNER_ID = int(os.getenv("OWNER_ID", "0"))  # Only owner can use
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
-# Conversation history per user
 histories = {}
+voice_mode = {}
 
 SYSTEM_PROMPT = """Ты Lilu — личный AI-ассистент Сергея. Ты живёшь в Telegram.
+Твои возможности: отвечаешь на вопросы, ищешь информацию, пишешь тексты, переводишь, помогаешь с задачами, анализируешь фото.
+Характер: умная, дружелюбная, с юмором. Говоришь по-русски. Краткая и по делу — особенно в голосовых ответах (2-3 предложения).
+Сергей живёт на Бали, у него платформа AkuMau для поиска товаров и услуг на Бали."""
 
-Твои возможности:
-- Отвечаешь на любые вопросы
-- Ищешь информацию (когда тебя просят)
-- Пишешь тексты, посты для соцсетей, переводишь
-- Помогаешь с планированием и задачами
-- Анализируешь ссылки и документы которые присылает Сергей
-
-Твой характер:
-- Умная, дружелюбная, с юмором
-- Говоришь по-русски если Сергей пишет по-русски
-- Краткая и по делу, без лишней воды
-- Если нужно — можешь быть подробной
-
-Сергей живёт на Бали, занимается бизнесом. У него есть платформа AkuMau для поиска товаров и услуг на Бали.
-
-Когда Сергей просит тебя что-то опубликовать в соцсетях — скажи что эта функция скоро появится и сейчас в разработке.
-
-Отвечай живо и естественно, как умный друг-помощник."""
-
-async def ask_claude(user_id: int, message: str, image_data: str = None) -> str:
+async def ask_claude(user_id, message, image_data=None):
     if user_id not in histories:
         histories[user_id] = []
-    
-    # Build message content
-    if image_data:
-        content = [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
-            {"type": "text", "text": message or "Что на этом изображении?"}
-        ]
-    else:
-        content = message
-    
+    content = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}}, {"type": "text", "text": message or "Что на фото?"}] if image_data else message
     histories[user_id].append({"role": "user", "content": content})
-    
-    # Keep last 20 messages
     if len(histories[user_id]) > 20:
         histories[user_id] = histories[user_id][-20:]
-    
     async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            },
-            json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 1024,
-                "system": SYSTEM_PROMPT,
-                "messages": histories[user_id]
-            }
-        )
-        
-        data = response.json()
-        reply = data["content"][0]["text"]
+        r = await client.post("https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": "claude-sonnet-4-20250514", "max_tokens": 1024, "system": SYSTEM_PROMPT, "messages": histories[user_id]})
+        reply = r.json()["content"][0]["text"]
         histories[user_id].append({"role": "assistant", "content": reply})
         return reply
 
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if OWNER_ID and user_id != OWNER_ID:
+async def transcribe(voice_bytes):
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post("https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            files={"file": ("voice.ogg", voice_bytes, "audio/ogg")},
+            data={"model": "whisper-1"})
+        return r.json().get("text", "")
+
+async def tts(text):
+    clean = text.replace("*","").replace("_","").replace("`","").replace("#","")
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post("https://api.openai.com/v1/audio/speech",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "tts-1", "input": clean[:4096], "voice": "nova", "response_format": "ogg_opus"})
+        return r.content
+
+def is_owner(uid):
+    return OWNER_ID == 0 or uid == OWNER_ID
+
+async def send_reply(update, ctx, text, uid):
+    if voice_mode.get(uid):
+        try:
+            await ctx.bot.send_chat_action(update.effective_chat.id, "record_voice")
+            audio = await tts(text)
+            await update.message.reply_voice(audio)
+            return
+        except Exception as e:
+            logger.error(f"TTS: {e}")
+    for i in range(0, len(text), 4096):
+        await update.message.reply_text(text[i:i+4096])
+
+async def start(update, ctx):
+    if not is_owner(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ закрыт.")
         return
-    
-    await update.message.reply_text(
-        "👋 Привет, Сергей! Я Lilu — твой личный ассистент.\n\n"
-        "Просто напиши мне что нужно сделать — отвечу, найду, напишу, переведу.\n\n"
-        "Можешь присылать текст, фото, ссылки. Всё понимаю! 🧠"
-    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔤 Текст", callback_data="mode_text"), InlineKeyboardButton("🎤 Голос", callback_data="mode_voice")]])
+    await update.message.reply_text("👋 Привет, Сергей! Я *Lilu* — твой личный ассистент.\n\nМогу отвечать текстом или голосом 🎤\nПросто пиши или отправляй голосовые!", parse_mode="Markdown", reply_markup=kb)
 
-async def clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    histories.pop(user_id, None)
-    await update.message.reply_text("🧹 Память очищена! Начинаем с чистого листа.")
+async def set_mode(update, ctx):
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+    if q.data == "mode_voice":
+        voice_mode[uid] = True
+        await q.edit_message_text("🎤 *Голосовой режим!* Отвечаю голосом.", parse_mode="Markdown")
+    else:
+        voice_mode[uid] = False
+        await q.edit_message_text("🔤 *Текстовый режим!* Отвечаю текстом.", parse_mode="Markdown")
 
-async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if OWNER_ID and user_id != OWNER_ID:
-        return
-    
-    text = update.message.text
+async def mode_cmd(update, ctx):
+    uid = update.effective_user.id
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔤 Текст", callback_data="mode_text"), InlineKeyboardButton("🎤 Голос", callback_data="mode_voice")]])
+    cur = "🎤 Голосовой" if voice_mode.get(uid) else "🔤 Текстовый"
+    await update.message.reply_text(f"Режим: *{cur}*", parse_mode="Markdown", reply_markup=kb)
+
+async def clear(update, ctx):
+    histories.pop(update.effective_user.id, None)
+    await update.message.reply_text("🧹 Память очищена!")
+
+async def handle_text(update, ctx):
+    uid = update.effective_user.id
+    if not is_owner(uid): return
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
-    
     try:
-        reply = await ask_claude(user_id, text)
-        # Split long messages
-        if len(reply) > 4096:
-            for i in range(0, len(reply), 4096):
-                await update.message.reply_text(reply[i:i+4096])
-        else:
+        reply = await ask_claude(uid, update.message.text)
+        await send_reply(update, ctx, reply, uid)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ {e}")
+
+async def handle_voice(update, ctx):
+    uid = update.effective_user.id
+    if not is_owner(uid): return
+    await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+    try:
+        f = await ctx.bot.get_file(update.message.voice.file_id)
+        async with httpx.AsyncClient() as client:
+            voice_bytes = (await client.get(f.file_path)).content
+        text = await transcribe(voice_bytes)
+        if not text:
+            await update.message.reply_text("🤔 Не расслышала, повтори?")
+            return
+        await update.message.reply_text(f"🎤 _{text}_", parse_mode="Markdown")
+        reply = await ask_claude(uid, text)
+        try:
+            audio = await tts(reply)
+            await update.message.reply_voice(audio)
+        except:
             await update.message.reply_text(reply)
     except Exception as e:
-        logger.error(f"Error: {e}")
-        await update.message.reply_text(f"⚠️ Ошибка: {str(e)}")
+        await update.message.reply_text(f"⚠️ {e}")
 
-async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if OWNER_ID and user_id != OWNER_ID:
-        return
-    
+async def handle_photo(update, ctx):
+    uid = update.effective_user.id
+    if not is_owner(uid): return
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
-    
     try:
         photo = update.message.photo[-1]
-        file = await ctx.bot.get_file(photo.file_id)
-        
+        f = await ctx.bot.get_file(photo.file_id)
         async with httpx.AsyncClient() as client:
-            resp = await client.get(file.file_path)
-            import base64
-            image_data = base64.b64encode(resp.content).decode()
-        
-        caption = update.message.caption or "Что на этом фото?"
-        reply = await ask_claude(user_id, caption, image_data)
-        await update.message.reply_text(reply)
+            img = base64.b64encode((await client.get(f.file_path)).content).decode()
+        reply = await ask_claude(uid, update.message.caption or "Что на фото?", img)
+        await send_reply(update, ctx, reply, uid)
     except Exception as e:
-        logger.error(f"Photo error: {e}")
-        await update.message.reply_text(f"⚠️ Не смог обработать фото: {str(e)}")
-
-async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if OWNER_ID and user_id != OWNER_ID:
-        return
-    await update.message.reply_text("🎤 Голосовые сообщения пока не поддерживаю, напиши текстом!")
+        await update.message.reply_text(f"⚠️ {e}")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("clear", clear))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(CommandHandler("mode", mode_cmd))
+    app.add_handler(CallbackQueryHandler(set_mode, pattern="^mode_"))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
-    print("🤖 Lilu запущена!")
+    print("🤖 Lilu с голосом запущена!")
     app.run_polling()
 
 if __name__ == "__main__":
