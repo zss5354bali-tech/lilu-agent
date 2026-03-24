@@ -38,18 +38,21 @@ async def ask_claude(user_id, message, image_data=None):
 
 async def transcribe(voice_bytes):
     async with httpx.AsyncClient(timeout=60) as client:
+        # Try with mp3 extension - Whisper is more reliable with it
         r = await client.post("https://api.openai.com/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            files={"file": ("voice.ogg", voice_bytes, "audio/ogg")},
+            files={"file": ("audio.mp3", voice_bytes, "audio/mpeg")},
             data={"model": "whisper-1"})
-        return r.json().get("text", "")
+        logger.info(f"Whisper response: {r.text}")
+        data = r.json()
+        return data.get("text", "")
 
 async def tts(text):
     clean = text.replace("*","").replace("_","").replace("`","").replace("#","")
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post("https://api.openai.com/v1/audio/speech",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "tts-1", "input": clean[:4096], "voice": "nova", "response_format": "ogg_opus"})
+            json={"model": "tts-1", "input": clean[:4096], "voice": "nova", "response_format": "mp3"})
         return r.content
 
 def is_owner(uid):
@@ -60,7 +63,7 @@ async def send_reply(update, ctx, text, uid):
         try:
             await ctx.bot.send_chat_action(update.effective_chat.id, "record_voice")
             audio = await tts(text)
-            await update.message.reply_voice(audio)
+            await update.message.reply_audio(audio, filename="lilu.mp3")
             return
         except Exception as e:
             logger.error(f"TTS: {e}")
@@ -110,21 +113,35 @@ async def handle_voice(update, ctx):
     if not is_owner(uid): return
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
     try:
-        f = await ctx.bot.get_file(update.message.voice.file_id)
+        # Download voice file
+        voice_obj = update.message.voice
+        logger.info(f"Voice: duration={voice_obj.duration}, mime={voice_obj.mime_type}, size={voice_obj.file_size}")
+        
+        f = await ctx.bot.get_file(voice_obj.file_id)
         async with httpx.AsyncClient() as client:
             voice_bytes = (await client.get(f.file_path)).content
+        
+        logger.info(f"Downloaded {len(voice_bytes)} bytes")
+        
         text = await transcribe(voice_bytes)
-        if not text:
-            await update.message.reply_text("🤔 Не расслышала, повтори?")
+        logger.info(f"Transcribed: '{text}'")
+        
+        if not text or text.strip() == "":
+            await update.message.reply_text("🤔 Не расслышала — говори чуть громче и чётче!")
             return
+        
         await update.message.reply_text(f"🎤 _{text}_", parse_mode="Markdown")
         reply = await ask_claude(uid, text)
+        
         try:
             audio = await tts(reply)
-            await update.message.reply_voice(audio)
-        except:
+            await update.message.reply_audio(audio, filename="lilu.mp3")
+        except Exception as e:
+            logger.error(f"TTS error: {e}")
             await update.message.reply_text(reply)
+            
     except Exception as e:
+        logger.error(f"Voice error: {e}")
         await update.message.reply_text(f"⚠️ {e}")
 
 async def handle_photo(update, ctx):
@@ -150,7 +167,7 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print("🤖 Lilu с голосом запущена!")
+    print("🤖 Lilu запущена!")
     app.run_polling()
 
 if __name__ == "__main__":
