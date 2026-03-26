@@ -22,97 +22,95 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 MAIL_EMAIL = os.getenv("MAIL_EMAIL", "alfa-sz@mail.ru")
-MAIL_IMAP = "imap.mail.ru"
+MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
 GMAIL_EMAIL = os.getenv("GMAIL_EMAIL", "zss5354bali@gmail.com")
-GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "")
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "").replace(" ", "")
 
-histories = {}
-voice_mode = {}
-memory = {}
-last_emails = {}
+IMAP_SERVER = "imap.mail.ru"
+
+# Per-user state
+histories = {}    # chat history
+voice_mode = {}   # voice/text mode
+memory = {}       # permanent memory
+last_emails = {}  # last fetched emails for deletion
 
 SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент Сергея Сергеевича Жмакова.
 
-СТИЛЬ ОБЩЕНИЯ:
-- Всегда обращайся "Сергей Сергеевич" — никаких "солнышко", "дорогой", "привет дружище"
-- Деловой, чёткий, профессиональный тон
-- Без лишних эмоций и восклицаний
-- Отвечай по делу, кратко и точно
+СТИЛЬ:
+- Обращайся ТОЛЬКО "Сергей Сергеевич"
+- Деловой, чёткий тон. Без "солнышко", "дорогой", лишних эмоций
 - В голосовых ответах — максимум 2-3 предложения
+- Ты помнишь весь контекст разговора — используй его!
 
+ВАЖНО ПРО КОНТЕКСТ:
+- Если в предыдущих сообщениях был найден email адрес — используй его
+- Если уже обсуждался какой-то контакт — помни об этом
+- Не теряй информацию из предыдущих сообщений
 
 ВОЗМОЖНОСТИ:
 - Отвечаешь на вопросы, ищешь информацию
-- Пишешь тексты, посты, переводишь
-- Управляешь почтой alfa-sz@mail.ru
-- Запоминаешь важную информацию
-- Анализируешь фото
+- Пишешь и переводишь тексты, деловые письма
+- Полностью управляешь почтой alfa-sz@mail.ru
+- Запоминаешь важную информацию навсегда
+- Анализируешь фото и документы
 
-ПОЧТОВЫЕ КОМАНДЫ (вставляй в ответ когда нужно):
-[EMAIL_CHECK] — проверить 5 новых писем
-[EMAIL_SEARCH:от кого] — найти письма от отправителя (например linkedin)
-[EMAIL_DELETE_FROM:от кого] — удалить ВСЕ письма от отправителя
-[EMAIL_SEND:кому@mail.com:Тема:Текст] — отправить письмо
-[EMAIL_DELETE:номер] — удалить письмо по номеру
-[MEMORY_SAVE:ключ:значение] — запомнить информацию
-
-ПАМЯТЬ:
-{memory}
-
-Сергей Сергеевич — гражданин России, живёт на Бали (Индонезия), инвесторский КИТАС.
-Владелец платформы AkuMau — маркетплейс товаров и услуг на Бали.
-Почта: alfa-sz@mail.ru
+ПОЧТОВЫЕ КОМАНДЫ (вставляй ТОЛЬКО команду без лишнего текста вокруг неё):
+[EMAIL_CHECK] — проверить новые письма
+[EMAIL_SEARCH:запрос] — найти письма по отправителю или теме
+[EMAIL_DELETE_FROM:отправитель] — удалить ВСЕ письма от отправителя
+[EMAIL_SEND:адрес@mail.com:Тема:Текст письма] — отправить письмо
+[EMAIL_DELETE:номер] — удалить письмо по номеру из списка
+[MEMORY_SAVE:ключ:значение] — сохранить важную информацию
 
 ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
-{memory}"""
+{memory}
+
+СПРАВКА:
+- Гражданин России, живёт на Бали (Индонезия), инвесторский КИТАС
+- Платформа AkuMau — маркетплейс товаров и услуг на Бали
+- Почта: alfa-sz@mail.ru (основная)
+- Gmail: zss5354bali@gmail.com (для отправки)"""
 
 class HTMLStripper(HTMLParser):
     def __init__(self):
         super().__init__()
         self.text = []
-    def handle_data(self, data):
-        self.text.append(data)
+    def handle_data(self, d):
+        self.text.append(d)
     def get_text(self):
         return ' '.join(self.text).strip()
 
 def strip_html(text):
-    if not text: return ""
-    if '<' not in text: return text
-    s = HTMLStripper()
+    if not text or '<' not in text:
+        return text or ""
     try:
+        s = HTMLStripper()
         s.feed(text)
-        return s.get_text()[:300]
+        return s.get_text()
     except:
-        return re.sub(r'<[^>]+>', ' ', text)[:300]
+        return re.sub(r'<[^>]+>', ' ', text)
 
 def decode_str(s):
     if not s: return ""
-    parts = decode_header(s)
     result = ""
-    for part, enc in parts:
+    for part, enc in decode_header(s):
         if isinstance(part, bytes):
             result += part.decode(enc or "utf-8", errors="ignore")
         else:
             result += str(part)
     return result
 
-def get_mail_connection():
-    mail_password = os.getenv("MAIL_PASSWORD")
-    mail = imaplib.IMAP4_SSL(MAIL_IMAP)
-    mail.login(MAIL_EMAIL, mail_password)
-    mail.select("INBOX")
-    return mail
-
-def get_email_body(msg):
+def get_body(msg):
     body = ""
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() == "text/plain":
+            ct = part.get_content_type()
+            if ct == "text/plain":
                 try:
                     body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
                     break
                 except: pass
-            elif part.get_content_type() == "text/html" and not body:
+            elif ct == "text/html" and not body:
                 try:
                     body = strip_html(part.get_payload(decode=True).decode("utf-8", errors="ignore"))
                 except: pass
@@ -124,142 +122,153 @@ def get_email_body(msg):
                 if '<' in body:
                     body = strip_html(body)
         except: pass
-    return body[:300].strip()
+    return re.sub(r'\s+', ' ', body).strip()[:400]
 
-def get_emails(user_id, limit=5):
+def imap_connect():
+    m = imaplib.IMAP4_SSL(IMAP_SERVER)
+    m.login(MAIL_EMAIL, MAIL_PASSWORD)
+    m.select("INBOX")
+    return m
+
+def get_emails(uid, limit=5):
     try:
-        mail = get_mail_connection()
-        _, data = mail.search(None, "UNSEEN")
+        m = imap_connect()
+        _, data = m.search(None, "UNSEEN")
         ids = data[0].split()
         if not ids:
-            mail.logout()
-            return "📭 Новых писем нет!"
-        result = f"📬 *Новых писем: {len(ids)}*\n\n"
-        last_emails[user_id] = []
-        for i, msg_id in enumerate(ids[-limit:]):
-            _, msg_data = mail.fetch(msg_id, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
-            subject = decode_str(msg.get("Subject", "Без темы"))
-            sender = decode_str(msg.get("From", ""))
+            m.logout()
+            return "📭 Новых писем нет."
+        result = f"📬 Новых писем: {len(ids)}\n\n"
+        last_emails[uid] = []
+        for i, mid in enumerate(ids[-limit:]):
+            _, md = m.fetch(mid, "(RFC822)")
+            msg = email.message_from_bytes(md[0][1])
+            subj = decode_str(msg.get("Subject", "Без темы"))
+            frm = decode_str(msg.get("From", ""))
             date = msg.get("Date", "")[:16]
-            body = get_email_body(msg)
-            last_emails[user_id].append({"id": msg_id, "subject": subject, "from": sender})
-            result += f"*{i+1}. {subject}*\nОт: {sender}\n{date}\n_{body}_\n\n"
-        mail.logout()
+            body = get_body(msg)
+            last_emails[uid].append({"id": mid, "subject": subj, "from": frm})
+            result += f"{i+1}. *{subj}*\nОт: {frm}\n{date}\n{body}\n\n"
+        m.logout()
         return result
     except Exception as e:
-        return f"⚠️ Ошибка чтения почты: {e}"
+        return f"⚠️ Ошибка чтения: {e}"
 
-def search_emails(user_id, sender_query):
+def search_emails(uid, query, limit=5):
     try:
-        mail = get_mail_connection()
-        search_term = sender_query.upper().encode("utf-8")
-        _, data = mail.search(None, f'FROM "{sender_query}"')
+        m = imap_connect()
+        _, data = m.search(None, f'FROM "{query}"')
         ids = data[0].split()
         if not ids:
-            mail.logout()
-            return f"📭 Писем от '{sender_query}' не найдено", []
-        result = f"🔍 Найдено писем от *{sender_query}*: {len(ids)}\n\n"
-        last_emails[user_id] = []
-        for i, msg_id in enumerate(ids[-5:]):
-            _, msg_data = mail.fetch(msg_id, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
-            subject = decode_str(msg.get("Subject", "Без темы"))
-            sender = decode_str(msg.get("From", ""))
-            last_emails[user_id].append({"id": msg_id, "subject": subject, "from": sender})
-            result += f"*{i+1}. {subject}*\nОт: {sender}\n\n"
-        mail.logout()
-        return result, ids
+            _, data = m.search(None, f'SUBJECT "{query}"')
+            ids = data[0].split()
+        if not ids:
+            m.logout()
+            return f"📭 Писем по запросу '{query}' не найдено."
+        result = f"🔍 Найдено: {len(ids)} писем по '{query}'\n\n"
+        last_emails[uid] = []
+        for i, mid in enumerate(ids[-limit:]):
+            _, md = m.fetch(mid, "(RFC822)")
+            msg = email.message_from_bytes(md[0][1])
+            subj = decode_str(msg.get("Subject", "Без темы"))
+            frm = decode_str(msg.get("From", ""))
+            last_emails[uid].append({"id": mid, "subject": subj, "from": frm})
+            result += f"{i+1}. *{subj}*\nОт: {frm}\n\n"
+        m.logout()
+        return result
     except Exception as e:
-        return f"⚠️ Ошибка поиска: {e}", []
+        return f"⚠️ Ошибка поиска: {e}"
 
-def delete_emails_from(sender_query):
+def delete_from(sender):
     try:
-        mail = get_mail_connection()
-        _, data = mail.search(None, f'FROM "{sender_query}"')
+        m = imap_connect()
+        _, data = m.search(None, f'FROM "{sender}"')
         ids = data[0].split()
         if not ids:
-            mail.logout()
-            return f"📭 Писем от '{sender_query}' не найдено"
-        count = len(ids)
-        for msg_id in ids:
-            mail.store(msg_id, '+FLAGS', '\\Deleted')
-        mail.expunge()
-        mail.logout()
-        return f"🗑 Удалено {count} писем от '{sender_query}'!"
+            m.logout()
+            return f"📭 Писем от '{sender}' не найдено."
+        for mid in ids:
+            m.store(mid, '+FLAGS', '\\Deleted')
+        m.expunge()
+        m.logout()
+        return f"🗑 Удалено {len(ids)} писем от '{sender}'."
     except Exception as e:
         return f"⚠️ Ошибка удаления: {e}"
 
-def delete_email_by_num(user_id, num):
+def delete_by_num(uid, num):
     try:
-        if user_id not in last_emails or num > len(last_emails[user_id]):
-            return "⚠️ Письмо не найдено. Сначала проверь почту."
-        mail_info = last_emails[user_id][num-1]
-        mail = get_mail_connection()
-        mail.store(mail_info["id"], '+FLAGS', '\\Deleted')
-        mail.expunge()
-        mail.logout()
-        return f"🗑 Письмо '{mail_info['subject']}' удалено!"
+        if uid not in last_emails or num < 1 or num > len(last_emails[uid]):
+            return "⚠️ Письмо не найдено. Сначала проверьте почту."
+        info = last_emails[uid][num-1]
+        m = imap_connect()
+        m.store(info["id"], '+FLAGS', '\\Deleted')
+        m.expunge()
+        m.logout()
+        return f"🗑 Удалено: '{info['subject']}'"
     except Exception as e:
         return f"⚠️ Ошибка: {e}"
 
 def send_email(to, subject, body):
     try:
         msg = MIMEMultipart()
-        msg["From"] = f"Sergey <{GMAIL_EMAIL}>"
-        msg["To"] = to
+        msg["From"] = f"Sergey Zhmakov <{GMAIL_EMAIL}>"
+        msg["To"] = to.strip()
         msg["Reply-To"] = MAIL_EMAIL
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        pwd = GMAIL_PASSWORD.replace(" ", "")
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(GMAIL_EMAIL, pwd)
-            server.send_message(msg)
+        msg["Subject"] = subject.strip()
+        msg.attach(MIMEText(body.strip(), "plain", "utf-8"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+            s.login(GMAIL_EMAIL, GMAIL_PASSWORD)
+            s.send_message(msg)
         return f"✅ Письмо отправлено на {to}"
     except Exception as e:
         return f"⚠️ Ошибка отправки: {e}"
 
-async def ask_claude(user_id, message, image_data=None):
-    if user_id not in histories:
-        histories[user_id] = []
-    mem_str = json.dumps(memory.get(user_id, {}), ensure_ascii=False) if memory.get(user_id) else "пусто"
+async def ask_claude(uid, message, image_data=None):
+    if uid not in histories:
+        histories[uid] = []
+    mem_str = json.dumps(memory.get(uid, {}), ensure_ascii=False) if memory.get(uid) else "пусто"
     system = SYSTEM_PROMPT.replace("{memory}", mem_str)
-    content = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}}, {"type": "text", "text": message or "Что на фото?"}] if image_data else message
-    histories[user_id].append({"role": "user", "content": content})
-    if len(histories[user_id]) > 30:
-        histories[user_id] = histories[user_id][-30:]
+    if image_data:
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+            {"type": "text", "text": message or "Что на фото?"}
+        ]
+    else:
+        content = message
+    histories[uid].append({"role": "user", "content": content})
+    if len(histories[uid]) > 40:
+        histories[uid] = histories[uid][-40:]
     async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post("https://api.anthropic.com/v1/messages",
+        r = await client.post(
+            "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": histories[user_id]})
+            json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": histories[uid]}
+        )
         reply = r.json()["content"][0]["text"]
-        histories[user_id].append({"role": "assistant", "content": reply})
+        histories[uid].append({"role": "assistant", "content": reply})
         return reply
 
-async def process_commands(reply, update, ctx, uid):
+async def process_commands(reply, update, uid):
     handled = False
-    clean = reply
 
     if "[EMAIL_CHECK]" in reply:
-        clean = clean.replace("[EMAIL_CHECK]", "").strip()
+        clean = reply.replace("[EMAIL_CHECK]", "").strip()
         if clean: await update.message.reply_text(clean)
         await update.message.reply_text(get_emails(uid), parse_mode="Markdown")
         handled = True
 
     elif "[EMAIL_DELETE_FROM:" in reply:
         sender = reply.split("[EMAIL_DELETE_FROM:")[1].split("]")[0].strip()
-        result = delete_emails_from(sender)
         clean = reply.split("[EMAIL_DELETE_FROM:")[0].strip()
         if clean: await update.message.reply_text(clean)
-        await update.message.reply_text(result)
+        await update.message.reply_text(delete_from(sender))
         handled = True
 
     elif "[EMAIL_SEARCH:" in reply:
-        sender = reply.split("[EMAIL_SEARCH:")[1].split("]")[0].strip()
-        result, _ = search_emails(uid, sender)
+        query = reply.split("[EMAIL_SEARCH:")[1].split("]")[0].strip()
         clean = reply.split("[EMAIL_SEARCH:")[0].strip()
         if clean: await update.message.reply_text(clean)
-        await update.message.reply_text(result, parse_mode="Markdown")
+        await update.message.reply_text(search_emails(uid, query), parse_mode="Markdown")
         handled = True
 
     elif "[EMAIL_SEND:" in reply:
@@ -267,10 +276,9 @@ async def process_commands(reply, update, ctx, uid):
             cmd = reply.split("[EMAIL_SEND:")[1].split("]")[0]
             parts = cmd.split(":", 2)
             if len(parts) == 3:
-                result = send_email(parts[0].strip(), parts[1].strip(), parts[2].strip())
                 clean = reply.split("[EMAIL_SEND:")[0].strip()
                 if clean: await update.message.reply_text(clean)
-                await update.message.reply_text(result)
+                await update.message.reply_text(send_email(parts[0], parts[1], parts[2]))
                 handled = True
         except Exception as e:
             await update.message.reply_text(f"⚠️ {e}")
@@ -279,10 +287,9 @@ async def process_commands(reply, update, ctx, uid):
     elif "[EMAIL_DELETE:" in reply:
         try:
             num = int(reply.split("[EMAIL_DELETE:")[1].split("]")[0])
-            result = delete_email_by_num(uid, num)
             clean = reply.split("[EMAIL_DELETE:")[0].strip()
             if clean: await update.message.reply_text(clean)
-            await update.message.reply_text(result)
+            await update.message.reply_text(delete_by_num(uid, num))
             handled = True
         except Exception as e:
             await update.message.reply_text(f"⚠️ {e}")
@@ -291,29 +298,33 @@ async def process_commands(reply, update, ctx, uid):
     if "[MEMORY_SAVE:" in reply:
         try:
             cmd = reply.split("[MEMORY_SAVE:")[1].split("]")[0]
-            key, value = cmd.split(":", 1)
+            k, v = cmd.split(":", 1)
             if uid not in memory: memory[uid] = {}
-            memory[uid][key.strip()] = value.strip()
-            await update.message.reply_text(f"💾 Запомнила: {key.strip()}")
+            memory[uid][k.strip()] = v.strip()
+            await update.message.reply_text(f"💾 Запомнила: {k.strip()}")
         except Exception as e:
             logger.error(f"Memory: {e}")
 
-    return handled, clean
+    return handled
 
 async def transcribe(voice_bytes):
     async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post("https://api.openai.com/v1/audio/transcriptions",
+        r = await client.post(
+            "https://api.openai.com/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
             files={"file": ("audio.mp3", voice_bytes, "audio/mpeg")},
-            data={"model": "whisper-1"})
+            data={"model": "whisper-1", "language": "ru"}
+        )
         return r.json().get("text", "")
 
 async def tts(text):
-    clean = re.sub(r'[\*\_\`\#\[\]]', '', text)
+    clean = re.sub(r'[\*\_\`\#\[\]]', '', text)[:4096]
     async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post("https://api.openai.com/v1/audio/speech",
+        r = await client.post(
+            "https://api.openai.com/v1/audio/speech",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "tts-1", "input": clean[:4096], "voice": "nova", "response_format": "mp3"})
+            json={"model": "tts-1", "input": clean, "voice": "nova", "response_format": "mp3"}
+        )
         return r.content
 
 def is_owner(uid):
@@ -326,7 +337,7 @@ async def send_reply(update, ctx, text, uid):
             await update.message.reply_audio(audio, filename="lilu.mp3")
             return
         except Exception as e:
-            logger.error(f"TTS: {e}")
+            logger.error(f"TTS error: {e}")
     for i in range(0, len(text), 4096):
         await update.message.reply_text(text[i:i+4096])
 
@@ -334,33 +345,45 @@ async def start(update, ctx):
     if not is_owner(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ закрыт.")
         return
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔤 Текст", callback_data="mode_text"), InlineKeyboardButton("🎤 Голос", callback_data="mode_voice")]])
-    await update.message.reply_text("👋 Привет, Сергей! Я *Lilu*.\n\n📧 Читаю, пишу, удаляю письма\n🔍 Ищу письма по отправителю\n🧠 Запоминаю важное\n🎤 Говорю голосом\n\nПросто скажи что нужно!", parse_mode="Markdown", reply_markup=kb)
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔤 Текст", callback_data="mode_text"),
+        InlineKeyboardButton("🎤 Голос", callback_data="mode_voice")
+    ]])
+    await update.message.reply_text(
+        "Здравствуйте, Сергей Сергеевич. Я Lilu, ваш персональный ассистент.\n\n"
+        "Готова к работе. Чем могу помочь?",
+        reply_markup=kb
+    )
 
 async def set_mode(update, ctx):
     q = update.callback_query
     await q.answer()
     uid = q.from_user.id
     voice_mode[uid] = q.data == "mode_voice"
-    await q.edit_message_text(f"*{'🎤 Голосовой' if voice_mode[uid] else '🔤 Текстовый'} режим!*", parse_mode="Markdown")
+    mode = "голосовой" if voice_mode[uid] else "текстовый"
+    await q.edit_message_text(f"Режим изменён на {mode}.")
 
 async def mode_cmd(update, ctx):
     uid = update.effective_user.id
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔤 Текст", callback_data="mode_text"), InlineKeyboardButton("🎤 Голос", callback_data="mode_voice")]])
-    await update.message.reply_text(f"Режим: *{'🎤 Голосовой' if voice_mode.get(uid) else '🔤 Текстовый'}*", parse_mode="Markdown", reply_markup=kb)
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔤 Текст", callback_data="mode_text"),
+        InlineKeyboardButton("🎤 Голос", callback_data="mode_voice")
+    ]])
+    cur = "голосовой" if voice_mode.get(uid) else "текстовый"
+    await update.message.reply_text(f"Текущий режим: {cur}.", reply_markup=kb)
 
-async def clear(update, ctx):
+async def clear_cmd(update, ctx):
     histories.pop(update.effective_user.id, None)
-    await update.message.reply_text("🧹 История очищена!")
+    await update.message.reply_text("История разговора очищена.")
 
 async def memory_cmd(update, ctx):
     uid = update.effective_user.id
     mem = memory.get(uid, {})
     if not mem:
-        await update.message.reply_text("🧠 Память пуста")
+        await update.message.reply_text("Память пуста.")
         return
-    text = "🧠 *Помню о тебе:*\n\n" + "\n".join(f"• *{k}*: {v}" for k, v in mem.items())
-    await update.message.reply_text(text, parse_mode="Markdown")
+    text = "Сохранено в памяти:\n\n" + "\n".join(f"• {k}: {v}" for k, v in mem.items())
+    await update.message.reply_text(text)
 
 async def mail_cmd(update, ctx):
     if not is_owner(update.effective_user.id): return
@@ -373,10 +396,11 @@ async def handle_text(update, ctx):
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
     try:
         reply = await ask_claude(uid, update.message.text)
-        handled, clean = await process_commands(reply, update, ctx, uid)
+        handled = await process_commands(reply, update, uid)
         if not handled:
             await send_reply(update, ctx, reply, uid)
     except Exception as e:
+        logger.error(f"Text error: {e}")
         await update.message.reply_text(f"⚠️ {e}")
 
 async def handle_voice(update, ctx):
@@ -389,11 +413,11 @@ async def handle_voice(update, ctx):
             voice_bytes = (await client.get(f.file_path)).content
         text = await transcribe(voice_bytes)
         if not text.strip():
-            await update.message.reply_text("🤔 Не расслышала, повтори?")
+            await update.message.reply_text("Не расслышала. Повторите, пожалуйста.")
             return
-        await update.message.reply_text(f"🎤 _{text}_", parse_mode="Markdown")
+        await update.message.reply_text(f"🎤 {text}")
         reply = await ask_claude(uid, text)
-        handled, clean = await process_commands(reply, update, ctx, uid)
+        handled = await process_commands(reply, update, uid)
         if not handled:
             try:
                 audio = await tts(reply)
@@ -401,6 +425,7 @@ async def handle_voice(update, ctx):
             except:
                 await update.message.reply_text(reply)
     except Exception as e:
+        logger.error(f"Voice error: {e}")
         await update.message.reply_text(f"⚠️ {e}")
 
 async def handle_photo(update, ctx):
@@ -419,7 +444,7 @@ async def handle_photo(update, ctx):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("clear", clear))
+    app.add_handler(CommandHandler("clear", clear_cmd))
     app.add_handler(CommandHandler("mode", mode_cmd))
     app.add_handler(CommandHandler("mail", mail_cmd))
     app.add_handler(CommandHandler("memory", memory_cmd))
@@ -427,8 +452,8 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print("🤖 Lilu v3 запущена!")
-    app.run_polling()
+    print("Lilu запущена.")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
