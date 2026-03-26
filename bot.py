@@ -216,7 +216,8 @@ def send_email(to, subject, body):
         msg["Reply-To"] = MAIL_EMAIL
         msg["Subject"] = subject.strip()
         msg.attach(MIMEText(body.strip(), "plain", "utf-8"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+        with smtplib.SMTP("smtp.gmail.com", 587) as s:
+            s.starttls()
             s.login(GMAIL_EMAIL, GMAIL_PASSWORD)
             s.send_message(msg)
         return f"✅ Письмо отправлено на {to}"
