@@ -54,13 +54,21 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 - Запоминаешь важную информацию навсегда
 - Анализируешь фото и документы
 
-ПОЧТОВЫЕ КОМАНДЫ (вставляй ТОЛЬКО команду без лишнего текста вокруг неё):
+ПОЧТОВЫЕ КОМАНДЫ (вставляй команду в ответ когда нужно):
 [EMAIL_CHECK] — проверить новые письма
-[EMAIL_SEARCH:запрос] — найти письма по отправителю или теме
+[EMAIL_SEARCH:запрос] — найти письма и адрес отправителя по имени или домену
 [EMAIL_DELETE_FROM:отправитель] — удалить ВСЕ письма от отправителя
 [EMAIL_SEND:адрес@mail.com:Тема:Текст письма] — отправить письмо
 [EMAIL_DELETE:номер] — удалить письмо по номеру из списка
 [MEMORY_SAVE:ключ:значение] — сохранить важную информацию
+
+ЛОГИКА ОТПРАВКИ ПИСЬМА:
+Когда просят отправить письмо конкретному человеку (например "Кравченко"):
+1. СНАЧАЛА выполни [EMAIL_SEARCH:Кравченко] чтобы найти его адрес в почте
+2. Из результатов поиска извлеки email адрес отправителя
+3. ЗАТЕМ отправь письмо на найденный адрес через [EMAIL_SEND:адрес:тема:текст]
+НЕ ПРОСИ адрес у пользователя если можешь найти его в почте сам!
+Если в памяти уже есть адрес этого человека — используй его сразу.
 
 ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
 {memory}
@@ -157,23 +165,50 @@ def get_emails(uid, limit=5):
 def search_emails(uid, query, limit=5):
     try:
         m = imap_connect()
-        _, data = m.search(None, f'FROM "{query}"')
+        # Try searching in FROM field
+        try:
+            _, data = m.search(None, f'FROM "{query}"')
+        except:
+            _, data = m.search(None, b'FROM "' + query.encode("utf-8") + b'"')
         ids = data[0].split()
         if not ids:
-            _, data = m.search(None, f'SUBJECT "{query}"')
+            try:
+                _, data = m.search(None, f'SUBJECT "{query}"')
+            except:
+                _, data = m.search(None, b'SUBJECT "' + query.encode("utf-8") + b'"')
             ids = data[0].split()
+        if not ids:
+            # Try ALL and filter manually
+            _, data = m.search(None, "ALL")
+            all_ids = data[0].split()
+            ids = []
+            for mid in all_ids[-50:]:
+                _, md = m.fetch(mid, "(RFC822)")
+                msg = email.message_from_bytes(md[0][1])
+                frm = decode_str(msg.get("From", "")).lower()
+                subj = decode_str(msg.get("Subject", "")).lower()
+                if query.lower() in frm or query.lower() in subj:
+                    ids.append(mid)
         if not ids:
             m.logout()
             return f"📭 Писем по запросу '{query}' не найдено."
         result = f"🔍 Найдено: {len(ids)} писем по '{query}'\n\n"
         last_emails[uid] = []
+        emails_found = []
         for i, mid in enumerate(ids[-limit:]):
             _, md = m.fetch(mid, "(RFC822)")
             msg = email.message_from_bytes(md[0][1])
             subj = decode_str(msg.get("Subject", "Без темы"))
             frm = decode_str(msg.get("From", ""))
-            last_emails[uid].append({"id": mid, "subject": subj, "from": frm})
-            result += f"{i+1}. *{subj}*\nОт: {frm}\n\n"
+            # Extract clean email address
+            import re as re2
+            email_match = re2.search(r'<([^>]+)>', frm)
+            clean_email = email_match.group(1) if email_match else frm
+            last_emails[uid].append({"id": mid, "subject": subj, "from": frm, "email": clean_email})
+            emails_found.append(clean_email)
+            result += f"{i+1}. *{subj}*\nОт: {frm}\nEmail: {clean_email}\n\n"
+        if emails_found:
+            result += f"\n📧 Найденные адреса: {', '.join(set(emails_found))}"
         m.logout()
         return result
     except Exception as e:
