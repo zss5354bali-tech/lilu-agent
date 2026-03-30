@@ -244,29 +244,29 @@ def delete_by_num(uid, num):
         return f"⚠️ Ошибка: {e}"
 
 def send_email(to, subject, body):
-    try:
-        import urllib.request
-        import json as json2
-        data = json2.dumps({
-            "from": "Sergey Zhmakov <onboarding@resend.dev>",
-            "to": [to.strip()],
-            "subject": subject.strip(),
-            "text": body.strip(),
-            "reply_to": MAIL_EMAIL
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://api.resend.com/emails",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {os.getenv('RESEND_API_KEY', '')}",
-                "Content-Type": "application/json"
-            }
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json2.loads(resp.read())
-            return f"✅ Письмо отправлено на {to}"
-    except Exception as e:
-        return f"⚠️ Ошибка отправки: {e}"
+    # Try multiple ports
+    for port, use_ssl in [(465, True), (587, False), (2525, False), (25, False)]:
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = MAIL_EMAIL
+            msg["To"] = to.strip()
+            msg["Subject"] = subject.strip()
+            msg.attach(MIMEText(body.strip(), "plain", "utf-8"))
+            if use_ssl:
+                with smtplib.SMTP_SSL("smtp.mail.ru", port, timeout=15) as s:
+                    s.login(MAIL_EMAIL, MAIL_PASSWORD)
+                    s.send_message(msg)
+            else:
+                with smtplib.SMTP("smtp.mail.ru", port, timeout=15) as s:
+                    try: s.starttls()
+                    except: pass
+                    s.login(MAIL_EMAIL, MAIL_PASSWORD)
+                    s.send_message(msg)
+            return f"✅ Письмо отправлено на {to} (порт {port})"
+        except Exception as e:
+            last_err = str(e)
+            continue
+    return f"⚠️ Все порты недоступны: {last_err}"
 
 async def ask_claude(uid, message, image_data=None):
     if uid not in histories:
