@@ -245,17 +245,26 @@ def delete_by_num(uid, num):
 
 def send_email(to, subject, body):
     try:
-        msg = MIMEMultipart()
-        msg["From"] = f"Sergey Zhmakov <{GMAIL_EMAIL}>"
-        msg["To"] = to.strip()
-        msg["Reply-To"] = MAIL_EMAIL
-        msg["Subject"] = subject.strip()
-        msg.attach(MIMEText(body.strip(), "plain", "utf-8"))
-        with smtplib.SMTP("smtp.gmail.com", 587) as s:
-            s.starttls()
-            s.login(GMAIL_EMAIL, GMAIL_PASSWORD)
-            s.send_message(msg)
-        return f"✅ Письмо отправлено на {to}"
+        import urllib.request
+        import json as json2
+        data = json2.dumps({
+            "from": "Sergey Zhmakov <onboarding@resend.dev>",
+            "to": [to.strip()],
+            "subject": subject.strip(),
+            "text": body.strip(),
+            "reply_to": MAIL_EMAIL
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {os.getenv('RESEND_API_KEY', '')}",
+                "Content-Type": "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json2.loads(resp.read())
+            return f"✅ Письмо отправлено на {to}"
     except Exception as e:
         return f"⚠️ Ошибка отправки: {e}"
 
