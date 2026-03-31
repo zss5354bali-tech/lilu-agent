@@ -244,29 +244,24 @@ def delete_by_num(uid, num):
         return f"⚠️ Ошибка: {e}"
 
 def send_email(to, subject, body):
-    # Try multiple ports
-    for port, use_ssl in [(465, True), (587, False), (2525, False), (25, False)]:
-        try:
-            msg = MIMEMultipart()
-            msg["From"] = MAIL_EMAIL
-            msg["To"] = to.strip()
-            msg["Subject"] = subject.strip()
-            msg.attach(MIMEText(body.strip(), "plain", "utf-8"))
-            if use_ssl:
-                with smtplib.SMTP_SSL("smtp.mail.ru", port, timeout=15) as s:
-                    s.login(MAIL_EMAIL, MAIL_PASSWORD)
-                    s.send_message(msg)
-            else:
-                with smtplib.SMTP("smtp.mail.ru", port, timeout=15) as s:
-                    try: s.starttls()
-                    except: pass
-                    s.login(MAIL_EMAIL, MAIL_PASSWORD)
-                    s.send_message(msg)
-            return f"✅ Письмо отправлено на {to} (порт {port})"
-        except Exception as e:
-            last_err = str(e)
-            continue
-    return f"⚠️ Все порты недоступны: {last_err}"
+    # Отправка через Gmail SMTP — обходит блокировку портов Railway
+    # Reply-To выставляется на alfa-sz@mail.ru чтобы ответы шли туда
+    sender = GMAIL_EMAIL or MAIL_EMAIL
+    password = GMAIL_PASSWORD or MAIL_PASSWORD
+    msg = MIMEMultipart()
+    msg["From"] = f"Сергей Жмаков <{sender}>"
+    msg["To"] = to.strip()
+    msg["Subject"] = subject.strip()
+    msg["Reply-To"] = MAIL_EMAIL
+    msg.attach(MIMEText(body.strip(), "plain", "utf-8"))
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:
+            s.starttls()
+            s.login(sender, password)
+            s.send_message(msg)
+        return f"✅ Письмо отправлено на {to.strip()}"
+    except Exception as e:
+        return f"⚠️ Ошибка отправки: {e}"
 
 async def ask_claude(uid, message, image_data=None):
     if uid not in histories:
@@ -293,64 +288,91 @@ async def ask_claude(uid, message, image_data=None):
         histories[uid].append({"role": "assistant", "content": reply})
         return reply
 
-async def process_commands(reply, update, uid):
-    handled = False
+async def claude_call(uid):
+    """Вызов Claude с текущей историей без добавления нового сообщения."""
+    mem_str = json.dumps(memory.get(uid, {}), ensure_ascii=False) if memory.get(uid) else "пусто"
+    system = SYSTEM_PROMPT.replace("{memory}", mem_str)
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": histories[uid]}
+        )
+        reply = r.json()["content"][0]["text"]
+        histories[uid].append({"role": "assistant", "content": reply})
+        return reply
 
-    if "[EMAIL_CHECK]" in reply:
-        clean = reply.replace("[EMAIL_CHECK]", "").strip()
-        if clean: await update.message.reply_text(clean)
-        await update.message.reply_text(get_emails(uid), parse_mode="Markdown")
-        handled = True
+async def process_commands(reply, update, uid, depth=0):
+    """
+    Разбирает и выполняет команды в ответе Claude.
+    После EMAIL_SEARCH результаты автоматически возвращаются в Claude —
+    он может сразу выполнить EMAIL_SEND без участия пользователя.
+    """
+    MAX_DEPTH = 3
 
-    elif "[EMAIL_DELETE_FROM:" in reply:
-        sender = reply.split("[EMAIL_DELETE_FROM:")[1].split("]")[0].strip()
-        clean = reply.split("[EMAIL_DELETE_FROM:")[0].strip()
-        if clean: await update.message.reply_text(clean)
-        await update.message.reply_text(delete_from(sender))
-        handled = True
-
-    elif "[EMAIL_SEARCH:" in reply:
-        query = reply.split("[EMAIL_SEARCH:")[1].split("]")[0].strip()
-        clean = reply.split("[EMAIL_SEARCH:")[0].strip()
-        if clean: await update.message.reply_text(clean)
-        await update.message.reply_text(search_emails(uid, query), parse_mode="Markdown")
-        handled = True
-
-    elif "[EMAIL_SEND:" in reply:
+    # MEMORY_SAVE можно совмещать с любой другой командой
+    for match in re.finditer(r'\[MEMORY_SAVE:([^\]]+)\]', reply):
         try:
-            cmd = reply.split("[EMAIL_SEND:")[1].split("]")[0]
-            parts = cmd.split(":", 2)
-            if len(parts) == 3:
-                clean = reply.split("[EMAIL_SEND:")[0].strip()
-                if clean: await update.message.reply_text(clean)
-                await update.message.reply_text(send_email(parts[0], parts[1], parts[2]))
-                handled = True
-        except Exception as e:
-            await update.message.reply_text(f"⚠️ {e}")
-            handled = True
-
-    elif "[EMAIL_DELETE:" in reply:
-        try:
-            num = int(reply.split("[EMAIL_DELETE:")[1].split("]")[0])
-            clean = reply.split("[EMAIL_DELETE:")[0].strip()
-            if clean: await update.message.reply_text(clean)
-            await update.message.reply_text(delete_by_num(uid, num))
-            handled = True
-        except Exception as e:
-            await update.message.reply_text(f"⚠️ {e}")
-            handled = True
-
-    if "[MEMORY_SAVE:" in reply:
-        try:
-            cmd = reply.split("[MEMORY_SAVE:")[1].split("]")[0]
-            k, v = cmd.split(":", 1)
+            k, v = match.group(1).split(":", 1)
             if uid not in memory: memory[uid] = {}
             memory[uid][k.strip()] = v.strip()
             await update.message.reply_text(f"💾 Запомнила: {k.strip()}")
         except Exception as e:
             logger.error(f"Memory: {e}")
 
-    return handled
+    clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[EMAIL_CHECK\]', '', reply).strip()
+
+    if "[EMAIL_CHECK]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(get_emails(uid), parse_mode="Markdown")
+        return True
+
+    m = re.search(r'\[EMAIL_SEARCH:([^\]]+)\]', reply)
+    if m:
+        query = m.group(1).strip()
+        if clean: await update.message.reply_text(clean)
+        result = search_emails(uid, query)
+        await update.message.reply_text(result, parse_mode="Markdown")
+        # Возвращаем результат поиска в Claude — он сам отправит письмо
+        if depth < MAX_DEPTH:
+            histories[uid].append({
+                "role": "user",
+                "content": f"[РЕЗУЛЬТАТ ПОИСКА]\n{result}\n\nЕсли нужно — выполни следующий шаг."
+            })
+            follow_up = await claude_call(uid)
+            if re.search(r'\[EMAIL_SEND:|EMAIL_DELETE|EMAIL_DELETE_FROM:', follow_up):
+                await process_commands(follow_up, update, uid, depth=depth + 1)
+            else:
+                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[EMAIL_CHECK\]', '', follow_up).strip()
+                if follow_clean: await update.message.reply_text(follow_clean)
+        return True
+
+    m = re.search(r'\[EMAIL_SEND:([^\]]+)\]', reply)
+    if m:
+        parts = m.group(1).split(":", 2)
+        if len(parts) == 3:
+            if clean: await update.message.reply_text(clean)
+            await update.message.reply_text(send_email(parts[0], parts[1], parts[2]))
+        else:
+            await update.message.reply_text("⚠️ Неверный формат EMAIL_SEND.")
+        return True
+
+    m = re.search(r'\[EMAIL_DELETE_FROM:([^\]]+)\]', reply)
+    if m:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(delete_from(m.group(1).strip()))
+        return True
+
+    m = re.search(r'\[EMAIL_DELETE:(\d+)\]', reply)
+    if m:
+        try:
+            if clean: await update.message.reply_text(clean)
+            await update.message.reply_text(delete_by_num(uid, int(m.group(1))))
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ {e}")
+        return True
+
+    return False
 
 async def transcribe(voice_bytes):
     async with httpx.AsyncClient(timeout=60) as client:
