@@ -23,8 +23,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 MAIL_EMAIL = os.getenv("MAIL_EMAIL", "alfa-sz@mail.ru")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
-GMAIL_EMAIL = os.getenv("GMAIL_EMAIL", "zss5354bali@gmail.com")
-GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "").replace(" ", "")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM = os.getenv("RESEND_FROM", "")  # например: lilu@yourdomain.com
 
 IMAP_SERVER = "imap.mail.ru"
 
@@ -244,22 +244,28 @@ def delete_by_num(uid, num):
         return f"⚠️ Ошибка: {e}"
 
 def send_email(to, subject, body):
-    # Отправка через Gmail SMTP — обходит блокировку портов Railway
-    # Reply-To выставляется на alfa-sz@mail.ru чтобы ответы шли туда
-    sender = GMAIL_EMAIL or MAIL_EMAIL
-    password = GMAIL_PASSWORD or MAIL_PASSWORD
-    msg = MIMEMultipart()
-    msg["From"] = f"Сергей Жмаков <{sender}>"
-    msg["To"] = to.strip()
-    msg["Subject"] = subject.strip()
-    msg["Reply-To"] = MAIL_EMAIL
-    msg.attach(MIMEText(body.strip(), "plain", "utf-8"))
+    """Отправка через Resend HTTP API (работает на Railway, использует HTTPS)."""
+    if not RESEND_API_KEY:
+        return "⚠️ RESEND_API_KEY не задан."
+    if not RESEND_FROM:
+        return "⚠️ RESEND_FROM не задан (укажите адрес отправителя, например lilu@yourdomain.com)."
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:
-            s.starttls()
-            s.login(sender, password)
-            s.send_message(msg)
-        return f"✅ Письмо отправлено на {to.strip()}"
+        with httpx.Client(timeout=15) as client:
+            r = client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "from": f"Сергей Жмаков <{RESEND_FROM}>",
+                    "to": [to.strip()],
+                    "subject": subject.strip(),
+                    "text": body.strip(),
+                    "reply_to": MAIL_EMAIL,
+                },
+            )
+        data = r.json()
+        if r.status_code in (200, 201):
+            return f"✅ Письмо отправлено на {to.strip()}"
+        return f"⚠️ Ошибка Resend: {data.get('message', r.text)}"
     except Exception as e:
         return f"⚠️ Ошибка отправки: {e}"
 
