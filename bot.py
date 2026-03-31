@@ -23,8 +23,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 MAIL_EMAIL = os.getenv("MAIL_EMAIL", "alfa-sz@mail.ru")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-RESEND_FROM = os.getenv("RESEND_FROM", "")  # например: lilu@yourdomain.com
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+BREVO_FROM_EMAIL = os.getenv("BREVO_FROM_EMAIL", "zss5354bali@gmail.com")
+BREVO_FROM_NAME = os.getenv("BREVO_FROM_NAME", "Сергей Жмаков")
 
 IMAP_SERVER = "imap.mail.ru"
 
@@ -244,28 +245,25 @@ def delete_by_num(uid, num):
         return f"⚠️ Ошибка: {e}"
 
 def send_email(to, subject, body):
-    """Отправка через Resend HTTP API (работает на Railway, использует HTTPS)."""
-    if not RESEND_API_KEY:
-        return "⚠️ RESEND_API_KEY не задан."
-    if not RESEND_FROM:
-        return "⚠️ RESEND_FROM не задан (укажите адрес отправителя, например lilu@yourdomain.com)."
+    """Отправка через Brevo HTTP API (работает на Railway, использует HTTPS)."""
+    if not BREVO_API_KEY:
+        return "⚠️ BREVO_API_KEY не задан."
     try:
         with httpx.Client(timeout=15) as client:
             r = client.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+                "https://api.brevo.com/v3/smtp/email",
+                headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
                 json={
-                    "from": f"Сергей Жмаков <{RESEND_FROM}>",
-                    "to": [to.strip()],
+                    "sender": {"name": BREVO_FROM_NAME, "email": BREVO_FROM_EMAIL},
+                    "to": [{"email": to.strip()}],
                     "subject": subject.strip(),
-                    "text": body.strip(),
-                    "reply_to": MAIL_EMAIL,
+                    "textContent": body.strip(),
+                    "replyTo": {"email": MAIL_EMAIL},
                 },
             )
-        data = r.json()
         if r.status_code in (200, 201):
             return f"✅ Письмо отправлено на {to.strip()}"
-        return f"⚠️ Ошибка Resend: {data.get('message', r.text)}"
+        return f"⚠️ Ошибка Brevo: {r.json().get('message', r.text)}"
     except Exception as e:
         return f"⚠️ Ошибка отправки: {e}"
 
