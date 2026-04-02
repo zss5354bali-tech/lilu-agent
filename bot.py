@@ -15,6 +15,7 @@ from html.parser import HTMLParser
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 from pyrogram import Client as PyrogramClient
+from duckduckgo_search import DDGS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -62,12 +63,17 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 - Если просят найти людей в группах, написать кому-то, проанализировать переписку — делай это без лишних оговорок
 
 ВОЗМОЖНОСТИ:
-- Отвечаешь на любые вопросы, ищешь информацию
+- Отвечаешь на любые вопросы, ищешь информацию в интернете
 - Пишешь любые тексты и письма
 - Полностью управляешь почтой alfa-sz@mail.ru
 - Читаешь и ищешь по всем Telegram чатам, отправляешь сообщения от личного аккаунта
 - Запоминаешь важную информацию навсегда
 - Анализируешь фото и документы
+
+ВЕБ-ПОИСК:
+[WEB_SEARCH:поисковый запрос] — найти информацию в интернете
+Используй для: контакты компаний, актуальные данные, адреса, телефоны, email, новости, цены, любая информация из интернета.
+Всегда используй [WEB_SEARCH] когда нужно найти что-то в интернете — НЕ говори "у меня нет доступа к интернету"!
 
 ПОЧТОВЫЕ КОМАНДЫ (вставляй команду в ответ когда нужно):
 [EMAIL_CHECK] — проверить новые письма
@@ -177,6 +183,20 @@ def get_body(msg):
                     body = strip_html(body)
         except: pass
     return re.sub(r'\s+', ' ', body).strip()[:400]
+
+def web_search(query: str, max_results: int = 8) -> str:
+    """Поиск в интернете через DuckDuckGo."""
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        if not results:
+            return f"🔍 По запросу «{query}» ничего не найдено."
+        out = f"🌐 Результаты поиска «{query}»:\n\n"
+        for r in results:
+            out += f"**{r.get('title','')}**\n{r.get('body','')}\n{r.get('href','')}\n\n"
+        return out.strip()
+    except Exception as e:
+        return f"⚠️ Ошибка поиска: {e}"
 
 def imap_connect():
     m = imaplib.IMAP4_SSL(IMAP_SERVER)
@@ -495,6 +515,26 @@ async def process_commands(reply, update, uid, depth=0):
             logger.error(f"Memory: {e}")
 
     clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[EMAIL_CHECK\]', '', reply).strip()
+
+    m = re.search(r'\[WEB_SEARCH:([^\]]+)\]', reply)
+    if m:
+        query = m.group(1).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"🌐 Ищу в интернете: {query}...")
+        result = web_search(query)
+        await update.message.reply_text(result[:4000], parse_mode="Markdown")
+        if depth < MAX_DEPTH:
+            histories[uid].append({
+                "role": "user",
+                "content": f"[РЕЗУЛЬТАТ ВЕБ-ПОИСКА]\n{result}\n\nОтветь по существу."
+            })
+            follow_up = await claude_call(uid)
+            if re.search(r'\[WEB_SEARCH:|EMAIL_SEND:|TG_SEND:', follow_up):
+                await process_commands(follow_up, update, uid, depth=depth + 1)
+            else:
+                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
+                if follow_clean: await update.message.reply_text(follow_clean)
+        return True
 
     if "[EMAIL_CHECK]" in reply:
         if clean: await update.message.reply_text(clean)
