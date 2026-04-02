@@ -73,8 +73,9 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 [MEMORY_SAVE:ключ:значение] — сохранить важную информацию
 
 TELEGRAM КОМАНДЫ (через личный аккаунт):
-[TG_SEND:@username_или_+телефон:Текст сообщения] — отправить сообщение через личный аккаунт Telegram
-[TG_READ:@username_или_+телефон] — прочитать последние сообщения из конкретного чата
+[TG_FIND_CONTACT:Имя Фамилия] — найти контакт по имени среди диалогов (получить @username или id)
+[TG_SEND:@username_или_id:Текст сообщения] — отправить сообщение через личный аккаунт Telegram
+[TG_READ:@username_или_id] — прочитать последние сообщения из конкретного чата
 [TG_SEARCH:запрос] — найти сообщения по ключевому слову во ВСЕХ чатах Telegram
 
 ЛОГИКА ОТПРАВКИ ПИСЬМА:
@@ -86,10 +87,13 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 Если в памяти уже есть адрес этого человека — используй его сразу.
 
 ЛОГИКА РАБОТЫ С TELEGRAM:
+Когда просят написать кому-то (например "напиши Алене Фитзон"):
+1. СНАЧАЛА найди контакт: [TG_FIND_CONTACT:Алена Фитзон]
+2. Из результата возьми @username или id
+3. ЗАТЕМ отправь: [TG_SEND:@username:текст]
+НЕ проси @username у Сергея Сергеевича — сначала ищи сам через TG_FIND_CONTACT!
+
 Когда просят найти переписку или упоминания — используй [TG_SEARCH:слово]
-Когда просят написать кому-то:
-1. Если известен @username или номер телефона — сразу [TG_SEND:@username:текст]
-2. Если не знаешь контакт — спроси у Сергея Сергеевича @username или телефон
 
 ВАЖНО: НЕ используй TG_SEND и TG_READ самостоятельно без явного запроса!
 Если Сергей Сергеевич спрашивает о возможностях — просто объясни их текстом, НЕ вызывай команды.
@@ -325,6 +329,33 @@ async def tg_read(recipient: str, limit: int = 5) -> str:
     except Exception as e:
         return f"⚠️ Ошибка чтения TG: {e}"
 
+async def tg_find_contact(name: str) -> str:
+    """Найти контакт по имени в диалогах."""
+    if not userbot:
+        return "⚠️ Userbot не подключён."
+    try:
+        found = []
+        name_lower = name.lower()
+        async for dialog in userbot.get_dialogs():
+            chat = dialog.chat
+            title = chat.title or ""
+            first = getattr(chat, "first_name", "") or ""
+            last = getattr(chat, "last_name", "") or ""
+            username = getattr(chat, "username", "") or ""
+            full = f"{first} {last}".strip()
+            if (name_lower in full.lower() or
+                name_lower in title.lower() or
+                name_lower in username.lower()):
+                contact_id = f"@{username}" if username else str(chat.id)
+                found.append(f"👤 {full or title} | {contact_id} | id:{chat.id}")
+                if len(found) >= 5:
+                    break
+        if not found:
+            return f"❌ Контакт «{name}» не найден в диалогах Telegram."
+        return f"🔎 Найдено по «{name}»:\n\n" + "\n".join(found)
+    except Exception as e:
+        return f"⚠️ Ошибка поиска контакта: {e}"
+
 async def tg_search(query: str, limit: int = 10) -> str:
     """Поиск сообщений по всем чатам через личный аккаунт."""
     if not userbot:
@@ -487,6 +518,25 @@ async def process_commands(reply, update, uid, depth=0):
         await update.message.reply_text("🔍 Ищу по всем чатам Telegram, подождите...")
         result = await tg_search(m.group(1).strip())
         await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[TG_FIND_CONTACT:([^\]]+)\]', reply)
+    if m:
+        if clean: await update.message.reply_text(clean)
+        result = await tg_find_contact(m.group(1).strip())
+        await update.message.reply_text(result)
+        # Передаём результат обратно в Claude — он сам отправит сообщение
+        if depth < MAX_DEPTH and "👤" in result:
+            histories[uid].append({
+                "role": "user",
+                "content": f"[РЕЗУЛЬТАТ ПОИСКА КОНТАКТА]\n{result}\n\nВыполни следующий шаг."
+            })
+            follow_up = await claude_call(uid)
+            if re.search(r'\[TG_SEND:', follow_up):
+                await process_commands(follow_up, update, uid, depth=depth + 1)
+            else:
+                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
+                if follow_clean: await update.message.reply_text(follow_clean)
         return True
 
     return False
