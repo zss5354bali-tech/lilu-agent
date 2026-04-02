@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 import httpx
 import base64
 import imaplib
@@ -13,6 +14,7 @@ from email.header import decode_header
 from html.parser import HTMLParser
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
+from pyrogram import Client as PyrogramClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,6 +28,9 @@ MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 BREVO_FROM_EMAIL = os.getenv("BREVO_FROM_EMAIL", "zss5354bali@gmail.com")
 BREVO_FROM_NAME = os.getenv("BREVO_FROM_NAME", "Сергей Жмаков")
+TG_SESSION_STRING = os.getenv("TG_SESSION_STRING", "")
+TG_API_ID = int(os.getenv("TG_API_ID", "35529109"))
+TG_API_HASH = os.getenv("TG_API_HASH", "8c2fc8ca860c843db14a42a2a1d12dfd")
 
 IMAP_SERVER = "imap.mail.ru"
 
@@ -34,6 +39,9 @@ histories = {}    # chat history
 voice_mode = {}   # voice/text mode
 memory = {}       # permanent memory
 last_emails = {}  # last fetched emails for deletion
+
+# Pyrogram userbot client (global)
+userbot: PyrogramClient | None = None
 
 SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент Сергея Сергеевича Жмакова.
 
@@ -52,6 +60,7 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 - Отвечаешь на вопросы, ищешь информацию
 - Пишешь и переводишь тексты, деловые письма
 - Полностью управляешь почтой alfa-sz@mail.ru
+- Отправляешь сообщения через личный Telegram аккаунт Сергея Сергеевича
 - Запоминаешь важную информацию навсегда
 - Анализируешь фото и документы
 
@@ -63,6 +72,10 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 [EMAIL_DELETE:номер] — удалить письмо по номеру из списка
 [MEMORY_SAVE:ключ:значение] — сохранить важную информацию
 
+TELEGRAM КОМАНДЫ (через личный аккаунт):
+[TG_SEND:@username_или_+телефон:Текст сообщения] — отправить сообщение через личный аккаунт Telegram
+[TG_READ:@username_или_+телефон] — прочитать последние сообщения из чата
+
 ЛОГИКА ОТПРАВКИ ПИСЬМА:
 Когда просят отправить письмо конкретному человеку (например "Кравченко"):
 1. СНАЧАЛА выполни [EMAIL_SEARCH:Кравченко] чтобы найти его адрес в почте
@@ -71,6 +84,11 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 НЕ ПРОСИ адрес у пользователя если можешь найти его в почте сам!
 Если в памяти уже есть адрес этого человека — используй его сразу.
 
+ЛОГИКА ОТПРАВКИ TELEGRAM:
+Когда просят написать кому-то в Telegram:
+1. Если известен @username или номер телефона — сразу [TG_SEND:@username:текст]
+2. Если не знаешь контакт — спроси у Сергея Сергеевича @username или телефон
+
 ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
 {memory}
 
@@ -78,7 +96,8 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 - Гражданин России, живёт на Бали (Индонезия), инвесторский КИТАС
 - Платформа AkuMau — маркетплейс товаров и услуг на Бали
 - Почта: alfa-sz@mail.ru (основная)
-- Gmail: zss5354bali@gmail.com (для отправки)"""
+- Gmail: zss5354bali@gmail.com (для отправки)
+- Telegram: +79180408607"""
 
 class HTMLStripper(HTMLParser):
     def __init__(self):
@@ -267,6 +286,33 @@ def send_email(to, subject, body):
     except Exception as e:
         return f"⚠️ Ошибка отправки: {e}"
 
+async def tg_send(recipient: str, text: str) -> str:
+    """Отправить сообщение через личный аккаунт Telegram."""
+    if not userbot:
+        return "⚠️ Userbot не подключён (TG_SESSION_STRING не задан)."
+    try:
+        await userbot.send_message(recipient.strip(), text.strip())
+        return f"✅ Сообщение отправлено в Telegram: {recipient.strip()}"
+    except Exception as e:
+        return f"⚠️ Ошибка TG отправки: {e}"
+
+async def tg_read(recipient: str, limit: int = 5) -> str:
+    """Прочитать последние сообщения из чата через личный аккаунт."""
+    if not userbot:
+        return "⚠️ Userbot не подключён (TG_SESSION_STRING не задан)."
+    try:
+        msgs = []
+        async for msg in userbot.get_chat_history(recipient.strip(), limit=limit):
+            sender = (msg.from_user.first_name if msg.from_user else "?")
+            content = msg.text or msg.caption or "[медиа]"
+            msgs.append(f"{sender}: {content}")
+        if not msgs:
+            return "📭 Сообщений не найдено."
+        msgs.reverse()
+        return "📨 Последние сообщения:\n\n" + "\n".join(msgs)
+    except Exception as e:
+        return f"⚠️ Ошибка чтения TG: {e}"
+
 async def ask_claude(uid, message, image_data=None):
     if uid not in histories:
         histories[uid] = []
@@ -344,7 +390,7 @@ async def process_commands(reply, update, uid, depth=0):
                 "content": f"[РЕЗУЛЬТАТ ПОИСКА]\n{result}\n\nЕсли нужно — выполни следующий шаг."
             })
             follow_up = await claude_call(uid)
-            if re.search(r'\[EMAIL_SEND:|EMAIL_DELETE|EMAIL_DELETE_FROM:', follow_up):
+            if re.search(r'\[EMAIL_SEND:|EMAIL_DELETE|EMAIL_DELETE_FROM:|TG_SEND:|TG_READ:', follow_up):
                 await process_commands(follow_up, update, uid, depth=depth + 1)
             else:
                 follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[EMAIL_CHECK\]', '', follow_up).strip()
@@ -374,6 +420,24 @@ async def process_commands(reply, update, uid, depth=0):
             await update.message.reply_text(delete_by_num(uid, int(m.group(1))))
         except Exception as e:
             await update.message.reply_text(f"⚠️ {e}")
+        return True
+
+    m = re.search(r'\[TG_SEND:([^\]]+)\]', reply)
+    if m:
+        parts = m.group(1).split(":", 1)
+        if len(parts) == 2:
+            if clean: await update.message.reply_text(clean)
+            result = await tg_send(parts[0], parts[1])
+            await update.message.reply_text(result)
+        else:
+            await update.message.reply_text("⚠️ Неверный формат TG_SEND.")
+        return True
+
+    m = re.search(r'\[TG_READ:([^\]]+)\]', reply)
+    if m:
+        if clean: await update.message.reply_text(clean)
+        result = await tg_read(m.group(1).strip())
+        await update.message.reply_text(result)
         return True
 
     return False
@@ -416,12 +480,14 @@ async def start(update, ctx):
     if not is_owner(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ закрыт.")
         return
+    tg_status = "✅ Telegram юзербот подключён" if userbot else "⚠️ Telegram юзербот не настроен"
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("🔤 Текст", callback_data="mode_text"),
         InlineKeyboardButton("🎤 Голос", callback_data="mode_voice")
     ]])
     await update.message.reply_text(
-        "Здравствуйте, Сергей Сергеевич. Я Lilu, ваш персональный ассистент.\n\n"
+        f"Здравствуйте, Сергей Сергеевич. Я Lilu, ваш персональный ассистент.\n\n"
+        f"{tg_status}\n\n"
         "Готова к работе. Чем могу помочь?",
         reply_markup=kb
     )
@@ -512,7 +578,28 @@ async def handle_photo(update, ctx):
     except Exception as e:
         await update.message.reply_text(f"⚠️ {e}")
 
-def main():
+async def main_async():
+    global userbot
+
+    # Запуск Pyrogram юзербота
+    if TG_SESSION_STRING:
+        try:
+            userbot = PyrogramClient(
+                name="lilu_userbot",
+                api_id=TG_API_ID,
+                api_hash=TG_API_HASH,
+                session_string=TG_SESSION_STRING,
+            )
+            await userbot.start()
+            me = await userbot.get_me()
+            logger.info(f"Userbot запущен: @{me.username} ({me.first_name})")
+        except Exception as e:
+            logger.error(f"Ошибка запуска userbot: {e}")
+            userbot = None
+    else:
+        logger.warning("TG_SESSION_STRING не задан — юзербот не активен.")
+
+    # Запуск основного бота
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("clear", clear_cmd))
@@ -523,8 +610,22 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
     print("Lilu запущена.")
-    app.run_polling(drop_pending_updates=True)
+    async with app:
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        try:
+            await asyncio.Event().wait()  # Работаем вечно
+        finally:
+            await app.updater.stop()
+            await app.stop()
+            if userbot:
+                await userbot.stop()
+                logger.info("Userbot остановлен.")
+
+def main():
+    asyncio.run(main_async())
 
 if __name__ == "__main__":
     main()
