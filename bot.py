@@ -335,7 +335,7 @@ async def tg_read(recipient: str, limit: int = 5) -> str:
     except Exception as e:
         return f"⚠️ Ошибка чтения TG: {e}"
 
-async def tg_read_group(group_name: str, limit: int = 30) -> str:
+async def tg_read_group(group_name: str, limit: int = 100) -> str:
     """Найти группу по названию и прочитать последние сообщения."""
     if not userbot:
         return "⚠️ Userbot не подключён."
