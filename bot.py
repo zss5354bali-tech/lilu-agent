@@ -76,6 +76,7 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 [TG_FIND_CONTACT:Имя Фамилия] — найти контакт по имени среди диалогов (получить @username или id)
 [TG_SEND:@username_или_id:Текст сообщения] — отправить сообщение через личный аккаунт Telegram
 [TG_READ:@username_или_id] — прочитать последние сообщения из конкретного чата
+[TG_READ_GROUP:название группы] — найти группу по названию и прочитать все последние сообщения
 [TG_SEARCH:запрос] — найти сообщения по ключевому слову во ВСЕХ чатах Telegram
 
 ЛОГИКА ОТПРАВКИ ПИСЬМА:
@@ -93,7 +94,12 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 3. ЗАТЕМ отправь: [TG_SEND:@username:текст]
 НЕ проси @username у Сергея Сергеевича — сначала ищи сам через TG_FIND_CONTACT!
 
-Когда просят найти переписку или упоминания — используй [TG_SEARCH:слово]
+Когда просят прочитать или проанализировать сообщения в конкретной группе:
+— Используй [TG_READ_GROUP:название группы]
+— Например: "ищи в группе Знакомство на Бали" → [TG_READ_GROUP:Знакомство на Бали]
+— После получения сообщений — проанализируй и ответь по существу
+
+Когда просят найти переписку или упоминания по ключевому слову — используй [TG_SEARCH:слово]
 
 ВАЖНО: НЕ используй TG_SEND и TG_READ самостоятельно без явного запроса!
 Если Сергей Сергеевич спрашивает о возможностях — просто объясни их текстом, НЕ вызывай команды.
@@ -329,6 +335,41 @@ async def tg_read(recipient: str, limit: int = 5) -> str:
     except Exception as e:
         return f"⚠️ Ошибка чтения TG: {e}"
 
+async def tg_read_group(group_name: str, limit: int = 30) -> str:
+    """Найти группу по названию и прочитать последние сообщения."""
+    if not userbot:
+        return "⚠️ Userbot не подключён."
+    try:
+        # Ищем группу по названию
+        target_chat = None
+        name_lower = group_name.lower()
+        async for dialog in userbot.get_dialogs():
+            chat = dialog.chat
+            title = chat.title or ""
+            if name_lower in title.lower():
+                target_chat = chat
+                break
+        if not target_chat:
+            return f"❌ Группа «{group_name}» не найдена в диалогах."
+        # Читаем сообщения
+        msgs = []
+        async for msg in userbot.get_chat_history(target_chat.id, limit=limit):
+            if not (msg.text or msg.caption):
+                continue
+            sender_name = "?"
+            if msg.from_user:
+                sender_name = f"{msg.from_user.first_name or ''} {msg.from_user.last_name or ''}".strip()
+            elif msg.sender_chat:
+                sender_name = msg.sender_chat.title or "?"
+            content = (msg.text or msg.caption or "").strip()[:300]
+            msgs.append(f"👤 {sender_name}: {content}")
+        if not msgs:
+            return f"📭 В группе «{target_chat.title}» сообщений нет."
+        msgs.reverse()
+        return f"📋 Группа «{target_chat.title}» — последние {len(msgs)} сообщений:\n\n" + "\n\n".join(msgs)
+    except Exception as e:
+        return f"⚠️ Ошибка чтения группы: {e}"
+
 async def tg_find_contact(name: str) -> str:
     """Найти контакт по имени в диалогах."""
     if not userbot:
@@ -518,6 +559,26 @@ async def process_commands(reply, update, uid, depth=0):
         await update.message.reply_text("🔍 Ищу по всем чатам Telegram, подождите...")
         result = await tg_search(m.group(1).strip())
         await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[TG_READ_GROUP:([^\]]+)\]', reply)
+    if m:
+        group_name = m.group(1).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"📋 Читаю группу «{group_name}»...")
+        result = await tg_read_group(group_name)
+        # Если сообщений много — отправляем кусками
+        for i in range(0, len(result), 4000):
+            await update.message.reply_text(result[i:i+4000])
+        # Передаём Claude для анализа
+        if depth < MAX_DEPTH and "👤" in result:
+            histories[uid].append({
+                "role": "user",
+                "content": f"[СООБЩЕНИЯ ИЗ ГРУППЫ]\n{result}\n\nПроанализируй и ответь по задаче."
+            })
+            analysis = await claude_call(uid)
+            analysis_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', analysis).strip()
+            if analysis_clean: await update.message.reply_text(analysis_clean)
         return True
 
     m = re.search(r'\[TG_FIND_CONTACT:([^\]]+)\]', reply)
