@@ -84,7 +84,8 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 [MEMORY_SAVE:ключ:значение] — сохранить важную информацию
 
 TELEGRAM КОМАНДЫ (через личный аккаунт):
-[TG_FIND_CONTACT:Имя Фамилия] — найти контакт по имени среди диалогов (получить @username или id)
+[TG_FIND_CONTACT:Имя Фамилия] — найти контакт среди личных диалогов
+[TG_GROUP_MEMBERS:название группы:Имя] — найти участника группы по имени и получить его id (используй когда человек из группы, а не из диалогов)
 [TG_SEND:@username_или_id:Текст сообщения] — отправить сообщение через личный аккаунт Telegram
 [TG_READ:@username_или_id] — прочитать последние сообщения из конкретного чата
 [TG_READ_GROUP:название группы] — найти группу по названию и прочитать все последние сообщения
@@ -100,11 +101,12 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 
 ЛОГИКА РАБОТЫ С TELEGRAM:
 
-Когда просят написать кому-то по имени (например "напиши Алене"):
-1. СНАЧАЛА найди контакт: [TG_FIND_CONTACT:Алена]
-2. Из результата возьми @username или числовой id (например id:123456789)
-3. ЗАТЕМ отправь: [TG_SEND:@username:текст] или [TG_SEND:123456789:текст]
-НИКОГДА не передавай имя человека напрямую в TG_SEND — только @username или числовой id!
+Когда просят написать кому-то по имени:
+1. Сначала попробуй [TG_FIND_CONTACT:Имя] — ищет среди личных диалогов
+2. Если не найден — человек из группы, используй [TG_GROUP_MEMBERS:название группы:Имя]
+3. Из результата возьми числовой id (например id:123456789)
+4. Затем отправь: [TG_SEND:123456789:текст]
+НИКОГДА не передавай имя напрямую в TG_SEND — только @username или числовой id!
 
 Когда нужно отправить несколько сообщений разным людям:
 1. Сначала составь все сообщения и покажи их пользователю
@@ -401,6 +403,43 @@ async def tg_read_group(group_name: str, limit: int = 100) -> str:
     except Exception as e:
         return f"⚠️ Ошибка чтения группы: {e}"
 
+async def tg_group_members(group_name: str, search_name: str = "") -> str:
+    """Найти участников группы по названию, опционально отфильтровать по имени."""
+    if not userbot:
+        return "⚠️ Userbot не подключён."
+    try:
+        # Ищем группу
+        target_chat = None
+        async for dialog in userbot.get_dialogs():
+            chat = dialog.chat
+            if group_name.lower() in (chat.title or "").lower():
+                target_chat = chat
+                break
+        if not target_chat:
+            return f"❌ Группа «{group_name}» не найдена."
+        # Получаем участников
+        members = []
+        async for member in userbot.get_chat_members(target_chat.id):
+            user = member.user
+            if user.is_bot or user.is_deleted:
+                continue
+            first = user.first_name or ""
+            last = user.last_name or ""
+            full = f"{first} {last}".strip()
+            username = f"@{user.username}" if user.username else f"id:{user.id}"
+            # Фильтр по имени если задан
+            if search_name and search_name.lower() not in full.lower():
+                continue
+            members.append(f"👤 {full} | {username} | id:{user.id}")
+            if len(members) >= 20:
+                break
+        if not members:
+            return f"❌ Участник «{search_name}» не найден в группе «{target_chat.title}»."
+        label = f"по «{search_name}»" if search_name else "все"
+        return f"👥 Участники группы «{target_chat.title}» ({label}):\n\n" + "\n".join(members)
+    except Exception as e:
+        return f"⚠️ Ошибка получения участников: {e}"
+
 async def tg_find_contact(name: str) -> str:
     """Найти контакт по имени в диалогах."""
     if not userbot:
@@ -522,7 +561,7 @@ async def process_commands(reply, update, uid, depth=0):
         if clean: await update.message.reply_text(clean)
         await update.message.reply_text(f"🌐 Ищу в интернете: {query}...")
         result = web_search(query)
-        await update.message.reply_text(result[:4000], parse_mode="Markdown")
+        await update.message.reply_text(result[:4000])
         if depth < MAX_DEPTH:
             histories[uid].append({
                 "role": "user",
@@ -632,19 +671,39 @@ async def process_commands(reply, update, uid, depth=0):
             if analysis_clean: await update.message.reply_text(analysis_clean)
         return True
 
+    m = re.search(r'\[TG_GROUP_MEMBERS:([^\]]+)\]', reply)
+    if m:
+        parts = m.group(1).split(":", 1)
+        group_name = parts[0].strip()
+        search_name = parts[1].strip() if len(parts) > 1 else ""
+        if clean: await update.message.reply_text(clean)
+        result = await tg_group_members(group_name, search_name)
+        await update.message.reply_text(result)
+        if depth < MAX_DEPTH and "👤" in result:
+            histories[uid].append({
+                "role": "user",
+                "content": f"[УЧАСТНИК ГРУППЫ НАЙДЕН]\n{result}\n\nВыполни следующий шаг."
+            })
+            follow_up = await claude_call(uid)
+            if re.search(r'\[TG_SEND:|TG_GROUP_MEMBERS:', follow_up):
+                await process_commands(follow_up, update, uid, depth=depth + 1)
+            else:
+                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
+                if follow_clean: await update.message.reply_text(follow_clean)
+        return True
+
     m = re.search(r'\[TG_FIND_CONTACT:([^\]]+)\]', reply)
     if m:
         if clean: await update.message.reply_text(clean)
         result = await tg_find_contact(m.group(1).strip())
         await update.message.reply_text(result)
-        # Передаём результат обратно в Claude — он сам отправит сообщение
         if depth < MAX_DEPTH and "👤" in result:
             histories[uid].append({
                 "role": "user",
                 "content": f"[РЕЗУЛЬТАТ ПОИСКА КОНТАКТА]\n{result}\n\nВыполни следующий шаг."
             })
             follow_up = await claude_call(uid)
-            if re.search(r'\[TG_SEND:', follow_up):
+            if re.search(r'\[TG_SEND:|TG_GROUP_MEMBERS:', follow_up):
                 await process_commands(follow_up, update, uid, depth=depth + 1)
             else:
                 follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
