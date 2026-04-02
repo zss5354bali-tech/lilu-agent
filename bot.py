@@ -74,7 +74,8 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 
 TELEGRAM КОМАНДЫ (через личный аккаунт):
 [TG_SEND:@username_или_+телефон:Текст сообщения] — отправить сообщение через личный аккаунт Telegram
-[TG_READ:@username_или_+телефон] — прочитать последние сообщения из чата
+[TG_READ:@username_или_+телефон] — прочитать последние сообщения из конкретного чата
+[TG_SEARCH:запрос] — найти сообщения по ключевому слову во ВСЕХ чатах Telegram
 
 ЛОГИКА ОТПРАВКИ ПИСЬМА:
 Когда просят отправить письмо конкретному человеку (например "Кравченко"):
@@ -84,8 +85,9 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 НЕ ПРОСИ адрес у пользователя если можешь найти его в почте сам!
 Если в памяти уже есть адрес этого человека — используй его сразу.
 
-ЛОГИКА ОТПРАВКИ TELEGRAM:
-Когда просят написать кому-то в Telegram:
+ЛОГИКА РАБОТЫ С TELEGRAM:
+Когда просят найти переписку или упоминания — используй [TG_SEARCH:слово]
+Когда просят написать кому-то:
 1. Если известен @username или номер телефона — сразу [TG_SEND:@username:текст]
 2. Если не знаешь контакт — спроси у Сергея Сергеевича @username или телефон
 
@@ -313,6 +315,35 @@ async def tg_read(recipient: str, limit: int = 5) -> str:
     except Exception as e:
         return f"⚠️ Ошибка чтения TG: {e}"
 
+async def tg_search(query: str, limit: int = 10) -> str:
+    """Поиск сообщений по всем чатам через личный аккаунт."""
+    if not userbot:
+        return "⚠️ Userbot не подключён (TG_SESSION_STRING не задан)."
+    try:
+        results = []
+        checked = 0
+        async for dialog in userbot.get_dialogs():
+            checked += 1
+            if checked > 200:
+                break
+            try:
+                async for msg in userbot.search_messages(dialog.chat.id, query=query, limit=3):
+                    chat_name = dialog.chat.title or dialog.chat.first_name or "?"
+                    content = msg.text or msg.caption or "[медиа]"
+                    sender = (msg.from_user.first_name if msg.from_user else chat_name)
+                    results.append(f"💬 {chat_name} | {sender}: {content[:150]}")
+                    if len(results) >= limit:
+                        break
+            except Exception:
+                continue
+            if len(results) >= limit:
+                break
+        if not results:
+            return f"🔍 По запросу «{query}» ничего не найдено в Telegram."
+        return f"🔍 Найдено в Telegram по «{query}»:\n\n" + "\n\n".join(results)
+    except Exception as e:
+        return f"⚠️ Ошибка поиска TG: {e}"
+
 async def ask_claude(uid, message, image_data=None):
     if uid not in histories:
         histories[uid] = []
@@ -437,6 +468,14 @@ async def process_commands(reply, update, uid, depth=0):
     if m:
         if clean: await update.message.reply_text(clean)
         result = await tg_read(m.group(1).strip())
+        await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[TG_SEARCH:([^\]]+)\]', reply)
+    if m:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("🔍 Ищу по всем чатам Telegram, подождите...")
+        result = await tg_search(m.group(1).strip())
         await update.message.reply_text(result)
         return True
 
