@@ -595,11 +595,7 @@ async def handle_voice(update, ctx):
         reply = await ask_claude(uid, text)
         handled = await process_commands(reply, update, uid)
         if not handled:
-            try:
-                audio = await tts(reply)
-                await update.message.reply_audio(audio, filename="lilu.mp3")
-            except:
-                await update.message.reply_text(reply)
+            await send_reply(update, ctx, reply, uid)
     except Exception as e:
         logger.error(f"Voice error: {e}")
         await update.message.reply_text(f"⚠️ {e}")
