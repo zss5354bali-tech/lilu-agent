@@ -91,6 +91,9 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 1. Если известен @username или номер телефона — сразу [TG_SEND:@username:текст]
 2. Если не знаешь контакт — спроси у Сергея Сергеевича @username или телефон
 
+ВАЖНО: НЕ используй TG_SEND и TG_READ самостоятельно без явного запроса!
+Если Сергей Сергеевич спрашивает о возможностях — просто объясни их текстом, НЕ вызывай команды.
+
 ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
 {memory}
 
@@ -292,9 +295,13 @@ async def tg_send(recipient: str, text: str) -> str:
     """Отправить сообщение через личный аккаунт Telegram."""
     if not userbot:
         return "⚠️ Userbot не подключён (TG_SESSION_STRING не задан)."
+    r = recipient.strip()
+    # Если передали имя без @ и без +, добавляем @
+    if not r.startswith("+") and not r.startswith("@") and not r.lstrip("-").isdigit():
+        r = "@" + r
     try:
-        await userbot.send_message(recipient.strip(), text.strip())
-        return f"✅ Сообщение отправлено в Telegram: {recipient.strip()}"
+        await userbot.send_message(r, text.strip())
+        return f"✅ Сообщение отправлено: {r}"
     except Exception as e:
         return f"⚠️ Ошибка TG отправки: {e}"
 
@@ -302,9 +309,12 @@ async def tg_read(recipient: str, limit: int = 5) -> str:
     """Прочитать последние сообщения из чата через личный аккаунт."""
     if not userbot:
         return "⚠️ Userbot не подключён (TG_SESSION_STRING не задан)."
+    r = recipient.strip()
+    if not r.startswith("+") and not r.startswith("@") and not r.lstrip("-").isdigit():
+        r = "@" + r
     try:
         msgs = []
-        async for msg in userbot.get_chat_history(recipient.strip(), limit=limit):
+        async for msg in userbot.get_chat_history(r, limit=limit):
             sender = (msg.from_user.first_name if msg.from_user else "?")
             content = msg.text or msg.caption or "[медиа]"
             msgs.append(f"{sender}: {content}")
