@@ -697,13 +697,13 @@ async def process_commands(reply, update, uid, depth=0):
         if clean: await update.message.reply_text(clean)
         result = await tg_find_contact(m.group(1).strip())
         await update.message.reply_text(result)
-        if depth < MAX_DEPTH and "👤" in result:
+        if depth < MAX_DEPTH:
             histories[uid].append({
                 "role": "user",
-                "content": f"[РЕЗУЛЬТАТ ПОИСКА КОНТАКТА]\n{result}\n\nВыполни следующий шаг."
+                "content": f"[РЕЗУЛЬТАТ ПОИСКА КОНТАКТА]\n{result}\n\nЕсли контакт найден — выполни следующий шаг. Если не найден — попробуй [TG_SEARCH:имя] чтобы найти его в переписках."
             })
             follow_up = await claude_call(uid)
-            if re.search(r'\[TG_SEND:|TG_GROUP_MEMBERS:', follow_up):
+            if re.search(r'\[TG_SEND:|TG_GROUP_MEMBERS:|TG_SEARCH:', follow_up):
                 await process_commands(follow_up, update, uid, depth=depth + 1)
             else:
                 follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
