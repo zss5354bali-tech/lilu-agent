@@ -84,6 +84,7 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 [MEMORY_SAVE:ключ:значение] — сохранить важную информацию
 
 TELEGRAM КОМАНДЫ (через личный аккаунт):
+[TG_INBOX] — показать последние входящие сообщения по всем чатам (используй когда просят посмотреть последние/новые/сегодняшние сообщения)
 [TG_FIND_CONTACT:Имя Фамилия] — найти контакт среди личных диалогов
 [TG_GROUP_MEMBERS:название группы:Имя] — найти участника группы по имени и получить его id (используй когда человек из группы, а не из диалогов)
 [TG_SEND:@username_или_id:Текст сообщения] — отправить сообщение через личный аккаунт Telegram
@@ -118,6 +119,7 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 — Используй [TG_READ_GROUP:название группы]
 — После получения сообщений — проанализируй и ответь по существу
 
+Когда просят посмотреть последние/новые/сегодняшние сообщения — используй [TG_INBOX]
 Когда просят найти переписку или упоминания по ключевому слову — используй [TG_SEARCH:слово]
 
 ВАЖНО: НЕ используй TG_SEND и TG_READ самостоятельно без явного запроса!
@@ -367,6 +369,44 @@ async def tg_read(recipient: str, limit: int = 5) -> str:
         return "📨 Последние сообщения:\n\n" + "\n".join(msgs)
     except Exception as e:
         return f"⚠️ Ошибка чтения TG: {e}"
+
+async def tg_inbox(limit: int = 20) -> str:
+    """Показать последние входящие сообщения по всем диалогам (как inbox)."""
+    if not userbot:
+        return "⚠️ Userbot не подключён."
+    try:
+        from datetime import datetime, timezone
+        msgs = []
+        count = 0
+        async for dialog in userbot.get_dialogs():
+            count += 1
+            if count > 100:
+                break
+            chat = dialog.chat
+            if not dialog.top_message:
+                continue
+            msg = dialog.top_message
+            # Только входящие (не от себя)
+            if msg.outgoing:
+                continue
+            content = (msg.text or msg.caption or "[медиа]")[:200]
+            title = chat.title or f"{getattr(chat,'first_name','')} {getattr(chat,'last_name','')}".strip()
+            # Время
+            msg_time = msg.date.strftime("%H:%M") if msg.date else "?"
+            sender = ""
+            if msg.from_user:
+                sender = f"{msg.from_user.first_name or ''} {msg.from_user.last_name or ''}".strip()
+            msgs.append((msg.date, f"🕐 {msg_time} | 💬 {title}" + (f" | от: {sender}" if sender and sender != title else "") + f"\n{content}\nchat_id:{chat.id}"))
+            if len(msgs) >= limit:
+                break
+        if not msgs:
+            return "📭 Новых входящих сообщений нет."
+        msgs.sort(key=lambda x: x[0], reverse=True)
+        result = f"📨 Последние {len(msgs)} входящих сообщений:\n\n"
+        result += "\n\n".join(m[1] for m in msgs)
+        return result
+    except Exception as e:
+        return f"⚠️ Ошибка чтения inbox: {e}"
 
 async def tg_read_group(group_name: str, limit: int = 100) -> str:
     """Найти группу по названию и прочитать последние сообщения."""
@@ -649,6 +689,24 @@ async def process_commands(reply, update, uid, depth=0):
         await update.message.reply_text("🔍 Ищу по всем чатам Telegram, подождите...")
         result = await tg_search(m.group(1).strip())
         await update.message.reply_text(result)
+        return True
+
+    if "[TG_INBOX]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("📨 Проверяю входящие сообщения...")
+        result = await tg_inbox()
+        await update.message.reply_text(result[:4000])
+        if depth < MAX_DEPTH:
+            histories[uid].append({
+                "role": "user",
+                "content": f"[ВХОДЯЩИЕ СООБЩЕНИЯ]\n{result}\n\nНайди нужного отправителя и выполни задачу."
+            })
+            follow_up = await claude_call(uid)
+            if re.search(r'\[TG_SEND:|TG_FIND_CONTACT:|TG_GROUP_MEMBERS:', follow_up):
+                await process_commands(follow_up, update, uid, depth=depth + 1)
+            else:
+                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[TG_INBOX\]', '', follow_up).strip()
+                if follow_clean: await update.message.reply_text(follow_clean)
         return True
 
     m = re.search(r'\[TG_READ_GROUP:([^\]]+)\]', reply)
