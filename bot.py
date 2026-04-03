@@ -370,7 +370,7 @@ async def tg_read(recipient: str, limit: int = 5) -> str:
     except Exception as e:
         return f"⚠️ Ошибка чтения TG: {e}"
 
-async def tg_inbox(limit: int = 20) -> str:
+async def tg_inbox(limit: int = 30) -> str:
     """Показать последние входящие сообщения по всем диалогам (как inbox)."""
     if not userbot:
         return "⚠️ Userbot не подключён."
@@ -481,14 +481,17 @@ async def tg_group_members(group_name: str, search_name: str = "") -> str:
         return f"⚠️ Ошибка получения участников: {e}"
 
 async def tg_find_contact(name: str) -> str:
-    """Найти контакт по имени/фамилии/username в диалогах."""
+    """Найти контакт по имени/фамилии/username среди ВСЕХ диалогов."""
     if not userbot:
         return "⚠️ Userbot не подключён."
     try:
         found = []
-        # Ищем по каждому слову из имени отдельно (чтобы "Карпушин" нашёл "Konstantin Karpushin")
         words = [w.lower() for w in name.split() if len(w) > 2]
+        checked = 0
         async for dialog in userbot.get_dialogs():
+            checked += 1
+            if checked > 500:  # Ищем среди 500 диалогов
+                break
             chat = dialog.chat
             title = chat.title or ""
             first = getattr(chat, "first_name", "") or ""
@@ -496,14 +499,13 @@ async def tg_find_contact(name: str) -> str:
             username = getattr(chat, "username", "") or ""
             full = f"{first} {last}".strip()
             search_str = f"{full} {title} {username}".lower()
-            # Совпадение если хотя бы одно слово из имени найдено
             if any(w in search_str for w in words):
                 contact_id = f"@{username}" if username else str(chat.id)
                 found.append(f"👤 {full or title} | {contact_id} | id:{chat.id}")
                 if len(found) >= 5:
                     break
         if not found:
-            return f"❌ Контакт «{name}» не найден в диалогах Telegram."
+            return f"❌ Контакт «{name}» не найден среди {checked} диалогов."
         return f"🔎 Найдено по «{name}»:\n\n" + "\n".join(found)
     except Exception as e:
         return f"⚠️ Ошибка поиска контакта: {e}"
@@ -696,11 +698,16 @@ async def process_commands(reply, update, uid, depth=0):
         if clean: await update.message.reply_text(clean)
         await update.message.reply_text("📨 Проверяю входящие...")
         result = await tg_inbox()
-        # Не показываем пользователю всю простыню — только отдаём Клоду
         if depth < MAX_DEPTH:
             histories[uid].append({
                 "role": "user",
-                "content": f"[ВХОДЯЩИЕ СООБЩЕНИЯ]\n{result}\n\nНайди нужного отправителя по имени/теме. Используй chat_id для отправки через TG_SEND. Не показывай пользователю весь список — только сообщи что нашёл и выполни задачу."
+                "content": (
+                    f"[ВХОДЯЩИЕ СООБЩЕНИЯ]\n{result}\n\n"
+                    "ИНСТРУКЦИЯ: Найди нужного отправителя. "
+                    "У каждого сообщения есть chat_id: — используй его НАПРЯМУЮ в TG_SEND без поиска через TG_FIND_CONTACT. "
+                    "Формат: [TG_SEND:chat_id:текст]. "
+                    "Пользователю НЕ показывай список сообщений — только скажи кому пишешь."
+                )
             })
             follow_up = await claude_call(uid)
             if re.search(r'\[TG_SEND:|TG_FIND_CONTACT:|TG_GROUP_MEMBERS:', follow_up):
