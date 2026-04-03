@@ -481,12 +481,13 @@ async def tg_group_members(group_name: str, search_name: str = "") -> str:
         return f"⚠️ Ошибка получения участников: {e}"
 
 async def tg_find_contact(name: str) -> str:
-    """Найти контакт по имени в диалогах."""
+    """Найти контакт по имени/фамилии/username в диалогах."""
     if not userbot:
         return "⚠️ Userbot не подключён."
     try:
         found = []
-        name_lower = name.lower()
+        # Ищем по каждому слову из имени отдельно (чтобы "Карпушин" нашёл "Konstantin Karpushin")
+        words = [w.lower() for w in name.split() if len(w) > 2]
         async for dialog in userbot.get_dialogs():
             chat = dialog.chat
             title = chat.title or ""
@@ -494,9 +495,9 @@ async def tg_find_contact(name: str) -> str:
             last = getattr(chat, "last_name", "") or ""
             username = getattr(chat, "username", "") or ""
             full = f"{first} {last}".strip()
-            if (name_lower in full.lower() or
-                name_lower in title.lower() or
-                name_lower in username.lower()):
+            search_str = f"{full} {title} {username}".lower()
+            # Совпадение если хотя бы одно слово из имени найдено
+            if any(w in search_str for w in words):
                 contact_id = f"@{username}" if username else str(chat.id)
                 found.append(f"👤 {full or title} | {contact_id} | id:{chat.id}")
                 if len(found) >= 5:
@@ -693,13 +694,13 @@ async def process_commands(reply, update, uid, depth=0):
 
     if "[TG_INBOX]" in reply:
         if clean: await update.message.reply_text(clean)
-        await update.message.reply_text("📨 Проверяю входящие сообщения...")
+        await update.message.reply_text("📨 Проверяю входящие...")
         result = await tg_inbox()
-        await update.message.reply_text(result[:4000])
+        # Не показываем пользователю всю простыню — только отдаём Клоду
         if depth < MAX_DEPTH:
             histories[uid].append({
                 "role": "user",
-                "content": f"[ВХОДЯЩИЕ СООБЩЕНИЯ]\n{result}\n\nНайди нужного отправителя и выполни задачу."
+                "content": f"[ВХОДЯЩИЕ СООБЩЕНИЯ]\n{result}\n\nНайди нужного отправителя по имени/теме. Используй chat_id для отправки через TG_SEND. Не показывай пользователю весь список — только сообщи что нашёл и выполни задачу."
             })
             follow_up = await claude_call(uid)
             if re.search(r'\[TG_SEND:|TG_FIND_CONTACT:|TG_GROUP_MEMBERS:', follow_up):
@@ -755,13 +756,13 @@ async def process_commands(reply, update, uid, depth=0):
         if clean: await update.message.reply_text(clean)
         result = await tg_find_contact(m.group(1).strip())
         await update.message.reply_text(result)
-        if depth < MAX_DEPTH:
+        if depth < MAX_DEPTH and "👤" in result:
             histories[uid].append({
                 "role": "user",
-                "content": f"[РЕЗУЛЬТАТ ПОИСКА КОНТАКТА]\n{result}\n\nЕсли контакт найден — выполни следующий шаг. Если не найден — попробуй [TG_SEARCH:имя] чтобы найти его в переписках."
+                "content": f"[РЕЗУЛЬТАТ ПОИСКА КОНТАКТА]\n{result}\n\nКонтакт найден. Используй id для TG_SEND и выполни задачу."
             })
             follow_up = await claude_call(uid)
-            if re.search(r'\[TG_SEND:|TG_GROUP_MEMBERS:|TG_SEARCH:', follow_up):
+            if re.search(r'\[TG_SEND:|TG_GROUP_MEMBERS:', follow_up):
                 await process_commands(follow_up, update, uid, depth=depth + 1)
             else:
                 follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
