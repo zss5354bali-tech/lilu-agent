@@ -193,18 +193,20 @@ def get_body(msg):
     return re.sub(r'\s+', ' ', body).strip()[:400]
 
 def web_search(query: str, max_results: int = 8) -> str:
-    """Поиск в интернете через DuckDuckGo."""
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-        if not results:
-            return f"🔍 По запросу «{query}» ничего не найдено."
-        out = f"🌐 Результаты поиска «{query}»:\n\n"
-        for r in results:
-            out += f"**{r.get('title','')}**\n{r.get('body','')}\n{r.get('href','')}\n\n"
-        return out.strip()
-    except Exception as e:
-        return f"⚠️ Ошибка поиска: {e}"
+    """Поиск через DuckDuckGo с автопереключением бэкендов при rate limit."""
+    for backend in ["lite", "html", "api"]:
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_results, backend=backend))
+            if not results:
+                continue
+            out = f"🌐 Результаты поиска «{query}»:\n\n"
+            for r in results:
+                out += f"**{r.get('title','')}**\n{r.get('body','')}\n{r.get('href','')}\n\n"
+            return out.strip()
+        except Exception:
+            continue
+    return f"⚠️ Поиск временно недоступен — DuckDuckGo заблокировал запросы (rate limit). Попробуйте повторить через минуту."
 
 def imap_connect():
     m = imaplib.IMAP4_SSL(IMAP_SERVER)
