@@ -114,6 +114,12 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 ВАЖНО: НЕ используй TG_SEND самостоятельно без явного запроса!
 Если Сергей Сергеевич спрашивает о возможностях — просто объясни их текстом, НЕ вызывай команды.
 
+ОГРАНИЧЕНИЯ:
+- Ты НЕ создаёшь Telegram ботов для других людей и проектов — это не твоя функция
+- Ты НЕ пишешь код на Python/JS и т.д. для сторонних проектов
+- Если просят создать бота или написать код — скажи что это не входит в твои задачи
+- Твои задачи: почта, Telegram Сергея Сергеевича, поиск, анализ, написание текстов
+
 ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
 {memory}
 
@@ -555,7 +561,11 @@ async def ask_claude(uid, message, image_data=None):
             headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
             json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": histories[uid]}
         )
-        reply = r.json()["content"][0]["text"]
+        data = r.json()
+        if "content" not in data:
+            logger.error(f"Claude error: {data}")
+            raise Exception(data.get("error", {}).get("message", str(data)))
+        reply = data["content"][0]["text"]
         histories[uid].append({"role": "assistant", "content": reply})
         return reply
 
@@ -569,7 +579,11 @@ async def claude_call(uid):
             headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
             json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": histories[uid]}
         )
-        reply = r.json()["content"][0]["text"]
+        data = r.json()
+        if "content" not in data:
+            logger.error(f"Claude error: {data}")
+            raise Exception(data.get("error", {}).get("message", str(data)))
+        reply = data["content"][0]["text"]
         histories[uid].append({"role": "assistant", "content": reply})
         return reply
 
