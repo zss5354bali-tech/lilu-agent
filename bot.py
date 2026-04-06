@@ -84,18 +84,27 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 [MEMORY_SAVE:ключ:значение] — сохранить важную информацию
 
 TELEGRAM КОМАНДЫ (через личный аккаунт):
+[TG_UNREAD] — прочитать все непрочитанные сообщения и предложить ответы
 [TG_SEND_TO:Имя или @username:Текст] — написать человеку (код сам найдёт контакт по имени)
 [TG_REPLY_INBOX:имя/описание отправителя:Текст] — ответить на входящее сообщение (код сам найдёт последнее сообщение от этого человека)
 [TG_SEND_GROUP_MEMBER:группа:Имя участника:Текст] — написать участнику группы (если нет в диалогах)
 [TG_READ_GROUP:название группы] — прочитать сообщения группы для анализа
-[TG_SEARCH:запрос] — найти по ключевому слову во всех чатах
+[TG_SEARCH:конкретное слово или фраза] — найти по ключевому слову во всех чатах (ОБЯЗАТЕЛЬНО укажи реальный поисковый запрос, не используй слово "запрос" буквально)
 [TG_SEND:@username_или_числовой_id:Текст] — отправить если уже известен точный id
 
 ПРАВИЛА:
+- "Просмотри непрочитанные" / "что пишут" → [TG_UNREAD]
 - Написать кому-то по имени → [TG_SEND_TO:Имя:Текст]
 - Ответить на входящее → [TG_REPLY_INBOX:имя отправителя:Текст]
 - Написать участнику группы → [TG_SEND_GROUP_MEMBER:группа:Имя:Текст]
 - Несколько получателей → покажи все сообщения, спроси "Отправить?", жди "да"
+
+СТИЛЬ ОТВЕТОВ СЕРГЕЯ СЕРГЕЕВИЧА В TELEGRAM:
+- Короткие, конкретные сообщения — 1-3 предложения максимум
+- По делу, без воды и вступлений
+- Деловой но человеческий тон
+- Русский язык, иногда английские термины
+- Никаких смайлов и лишних слов вроде "конечно", "разумеется", "безусловно"
 
 ЛОГИКА ОТПРАВКИ ПИСЬМА:
 Когда просят отправить письмо конкретному человеку (например "Кравченко"):
@@ -540,6 +549,52 @@ async def tg_search(query: str, limit: int = 10) -> str:
     except Exception as e:
         return f"⚠️ Ошибка поиска TG: {e}"
 
+async def tg_get_unread(limit: int = 15) -> list:
+    """Получить непрочитанные диалоги с контекстом переписки."""
+    if not userbot:
+        return []
+    unread = []
+    checked = 0
+    async for dialog in userbot.get_dialogs():
+        checked += 1
+        if checked > 300:
+            break
+        if (dialog.unread_messages_count or 0) == 0:
+            continue
+        chat = dialog.chat
+        # Берём последние 5 сообщений для контекста
+        msgs = []
+        try:
+            async for msg in userbot.get_chat_history(chat.id, limit=5):
+                if not (msg.text or msg.caption):
+                    continue
+                sender = ""
+                if msg.from_user:
+                    sender = f"{msg.from_user.first_name or ''} {msg.from_user.last_name or ''}".strip()
+                elif msg.sender_chat:
+                    sender = msg.sender_chat.title or "?"
+                else:
+                    sender = "?"
+                content = (msg.text or msg.caption or "").strip()[:300]
+                msgs.append({"sender": sender, "text": content, "out": msg.outgoing})
+        except Exception:
+            continue
+        if not msgs:
+            continue
+        msgs.reverse()
+        first = getattr(chat, "first_name", "") or ""
+        last = getattr(chat, "last_name", "") or ""
+        name = f"{first} {last}".strip() or chat.title or str(chat.id)
+        unread.append({
+            "chat_id": chat.id,
+            "name": name,
+            "unread": dialog.unread_messages_count,
+            "messages": msgs
+        })
+        if len(unread) >= limit:
+            break
+    return unread
+
 async def ask_claude(uid, message, image_data=None):
     if uid not in histories:
         histories[uid] = []
@@ -675,6 +730,43 @@ async def process_commands(reply, update, uid, depth=0):
             await update.message.reply_text(delete_by_num(uid, int(m.group(1))))
         except Exception as e:
             await update.message.reply_text(f"⚠️ {e}")
+        return True
+
+    # --- TG_UNREAD: непрочитанные + предложение ответов ---
+
+    if "[TG_UNREAD]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("📬 Читаю непрочитанные сообщения...")
+        unread_list = await tg_get_unread()
+        if not unread_list:
+            await update.message.reply_text("📭 Непрочитанных сообщений нет.")
+            return True
+        # Формируем сводку для Claude
+        summary = f"Непрочитанных диалогов: {len(unread_list)}\n\n"
+        for i, item in enumerate(unread_list, 1):
+            summary += f"--- {i}. {item['name']} (непрочитанных: {item['unread']}) ---\n"
+            for msg in item["messages"]:
+                direction = "→ Вы" if msg["out"] else f"← {msg['sender']}"
+                summary += f"{direction}: {msg['text']}\n"
+            summary += "\n"
+        await update.message.reply_text(f"📋 Найдено {len(unread_list)} непрочитанных диалогов. Анализирую...")
+        if depth < MAX_DEPTH:
+            histories[uid].append({
+                "role": "user",
+                "content": (
+                    f"[НЕПРОЧИТАННЫЕ TELEGRAM СООБЩЕНИЯ]\n{summary}\n\n"
+                    "Для каждого диалога:\n"
+                    "1. Кратко что пишут\n"
+                    "2. Предложи готовый ответ в стиле Сергея Сергеевича — коротко, по делу, без лишних слов\n"
+                    "Формат: **Имя**: [суть] → Предлагаю ответить: «текст ответа»\n"
+                    "Если сообщение не требует ответа — так и скажи."
+                )
+            })
+            analysis = await claude_call(uid)
+            analysis_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', analysis).strip()
+            if analysis_clean:
+                for i in range(0, len(analysis_clean), 4000):
+                    await update.message.reply_text(analysis_clean[i:i+4000])
         return True
 
     # --- Атомарные TG команды (код делает всё сам, без Claude в середине) ---
