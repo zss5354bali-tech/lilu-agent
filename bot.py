@@ -84,13 +84,18 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 [MEMORY_SAVE:ключ:значение] — сохранить важную информацию
 
 TELEGRAM КОМАНДЫ (через личный аккаунт):
-[TG_INBOX] — показать последние входящие сообщения по всем чатам (используй когда просят посмотреть последние/новые/сегодняшние сообщения)
-[TG_FIND_CONTACT:Имя Фамилия] — найти контакт среди личных диалогов
-[TG_GROUP_MEMBERS:название группы:Имя] — найти участника группы по имени и получить его id (используй когда человек из группы, а не из диалогов)
-[TG_SEND:@username_или_id:Текст сообщения] — отправить сообщение через личный аккаунт Telegram
-[TG_READ:@username_или_id] — прочитать последние сообщения из конкретного чата
-[TG_READ_GROUP:название группы] — найти группу по названию и прочитать все последние сообщения
-[TG_SEARCH:запрос] — найти сообщения по ключевому слову во ВСЕХ чатах Telegram
+[TG_SEND_TO:Имя или @username:Текст] — написать человеку (код сам найдёт контакт по имени)
+[TG_REPLY_INBOX:имя/описание отправителя:Текст] — ответить на входящее сообщение (код сам найдёт последнее сообщение от этого человека)
+[TG_SEND_GROUP_MEMBER:группа:Имя участника:Текст] — написать участнику группы (если нет в диалогах)
+[TG_READ_GROUP:название группы] — прочитать сообщения группы для анализа
+[TG_SEARCH:запрос] — найти по ключевому слову во всех чатах
+[TG_SEND:@username_или_числовой_id:Текст] — отправить если уже известен точный id
+
+ПРАВИЛА:
+- Написать кому-то по имени → [TG_SEND_TO:Имя:Текст]
+- Ответить на входящее → [TG_REPLY_INBOX:имя отправителя:Текст]
+- Написать участнику группы → [TG_SEND_GROUP_MEMBER:группа:Имя:Текст]
+- Несколько получателей → покажи все сообщения, спроси "Отправить?", жди "да"
 
 ЛОГИКА ОТПРАВКИ ПИСЬМА:
 Когда просят отправить письмо конкретному человеку (например "Кравченко"):
@@ -100,29 +105,13 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 НЕ ПРОСИ адрес у пользователя если можешь найти его в почте сам!
 Если в памяти уже есть адрес этого человека — используй его сразу.
 
-ЛОГИКА РАБОТЫ С TELEGRAM:
-
-Когда просят написать кому-то по имени:
-1. Сначала попробуй [TG_FIND_CONTACT:Имя] — ищет среди личных диалогов
-2. Если не найден — человек из группы, используй [TG_GROUP_MEMBERS:название группы:Имя]
-3. Из результата возьми числовой id (например id:123456789)
-4. Затем отправь: [TG_SEND:123456789:текст]
-НИКОГДА не передавай имя напрямую в TG_SEND — только @username или числовой id!
-
-Когда нужно отправить несколько сообщений разным людям:
-1. Сначала составь все сообщения и покажи их пользователю
-2. Спроси: "Отправить?" и ЖДИ ответа "да"
-3. Только после подтверждения "да" — ищи каждый контакт и отправляй
-НЕ отправляй сообщения до получения явного "да" от Сергея Сергеевича!
-
 Когда просят прочитать или проанализировать сообщения в конкретной группе:
 — Используй [TG_READ_GROUP:название группы]
 — После получения сообщений — проанализируй и ответь по существу
 
-Когда просят посмотреть последние/новые/сегодняшние сообщения — используй [TG_INBOX]
 Когда просят найти переписку или упоминания по ключевому слову — используй [TG_SEARCH:слово]
 
-ВАЖНО: НЕ используй TG_SEND и TG_READ самостоятельно без явного запроса!
+ВАЖНО: НЕ используй TG_SEND самостоятельно без явного запроса!
 Если Сергей Сергеевич спрашивает о возможностях — просто объясни их текстом, НЕ вызывай команды.
 
 ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
@@ -337,7 +326,7 @@ def send_email(to, subject, body):
         return f"⚠️ Ошибка отправки: {e}"
 
 async def tg_send(recipient: str, text: str) -> str:
-    """Отправить сообщение через личный аккаунт Telegram."""
+    """Отправить сообщение через личный аккаунт Telegram (точный @username или числовой id)."""
     if not userbot:
         return "⚠️ Userbot не подключён (TG_SESSION_STRING не задан)."
     r = recipient.strip()
@@ -349,6 +338,117 @@ async def tg_send(recipient: str, text: str) -> str:
         return f"✅ Сообщение отправлено: {r}"
     except Exception as e:
         return f"⚠️ Ошибка TG отправки: {e}"
+
+async def tg_send_to(name: str, text: str) -> str:
+    """Найти контакт по имени среди диалогов и отправить сообщение напрямую."""
+    if not userbot:
+        return "⚠️ Userbot не подключён."
+    name = name.strip()
+    # Если передали @username — отправляем напрямую
+    if name.startswith("@"):
+        try:
+            await userbot.send_message(name, text.strip())
+            return f"✅ Отправлено {name}"
+        except Exception as e:
+            return f"⚠️ Ошибка отправки {name}: {e}"
+    try:
+        words = [w.lower() for w in name.split() if len(w) > 1]
+        checked = 0
+        async for dialog in userbot.get_dialogs():
+            checked += 1
+            if checked > 500:
+                break
+            chat = dialog.chat
+            first = getattr(chat, "first_name", "") or ""
+            last = getattr(chat, "last_name", "") or ""
+            title = chat.title or ""
+            username = getattr(chat, "username", "") or ""
+            full = f"{first} {last}".strip()
+            search_str = f"{full} {title} {username}".lower()
+            if any(w in search_str for w in words):
+                display = full or title or username or str(chat.id)
+                try:
+                    await userbot.send_message(chat.id, text.strip())
+                    return f"✅ Отправлено {display}"
+                except Exception as e:
+                    return f"⚠️ Найден {display}, но ошибка отправки: {e}"
+        return f"❌ Контакт не найден: {name}"
+    except Exception as e:
+        return f"⚠️ Ошибка tg_send_to: {e}"
+
+async def tg_reply_inbox(description: str, text: str) -> str:
+    """Найти последнее входящее сообщение по описанию отправителя и ответить."""
+    if not userbot:
+        return "⚠️ Userbot не подключён."
+    description = description.strip()
+    words = [w.lower() for w in description.split() if len(w) > 1]
+    try:
+        checked = 0
+        async for dialog in userbot.get_dialogs():
+            checked += 1
+            if checked > 50:
+                break
+            msg = dialog.top_message
+            if not msg or msg.outgoing:
+                continue
+            chat = dialog.chat
+            first = getattr(chat, "first_name", "") or ""
+            last = getattr(chat, "last_name", "") or ""
+            title = chat.title or ""
+            username = getattr(chat, "username", "") or ""
+            sender_name = ""
+            if msg.from_user:
+                sender_name = f"{msg.from_user.first_name or ''} {msg.from_user.last_name or ''}".strip()
+            full = f"{first} {last} {title} {username} {sender_name}".lower()
+            if any(w in full for w in words):
+                display = (first + " " + last).strip() or title or username or str(chat.id)
+                preview = (text[:50] + "...") if len(text) > 50 else text
+                try:
+                    await userbot.send_message(chat.id, text.strip())
+                    return f"✅ Ответ отправлен {display}: {preview}"
+                except Exception as e:
+                    return f"⚠️ Найден {display}, но ошибка отправки: {e}"
+        return f"❌ Входящее от «{description}» не найдено среди последних {checked} диалогов."
+    except Exception as e:
+        return f"⚠️ Ошибка tg_reply_inbox: {e}"
+
+async def tg_send_group_member(group_name: str, member_name: str, text: str) -> str:
+    """Найти участника группы по имени и отправить ему сообщение напрямую."""
+    if not userbot:
+        return "⚠️ Userbot не подключён."
+    group_name = group_name.strip()
+    member_name = member_name.strip()
+    try:
+        # Ищем группу
+        target_chat = None
+        async for dialog in userbot.get_dialogs():
+            chat = dialog.chat
+            if group_name.lower() in (chat.title or "").lower():
+                target_chat = chat
+                break
+        if not target_chat:
+            return f"❌ Группа «{group_name}» не найдена."
+        # Ищем участника
+        name_words = [w.lower() for w in member_name.split() if len(w) > 1]
+        async for member in userbot.get_chat_members(target_chat.id):
+            user = member.user
+            if user.is_bot or user.is_deleted:
+                continue
+            first = user.first_name or ""
+            last = user.last_name or ""
+            full = f"{first} {last}".strip()
+            username = user.username or ""
+            search_str = f"{full} {username}".lower()
+            if any(w in search_str for w in name_words):
+                display = full or username or str(user.id)
+                try:
+                    await userbot.send_message(user.id, text.strip())
+                    return f"✅ Отправлено {display} (из группы «{target_chat.title}»)"
+                except Exception as e:
+                    return f"⚠️ Найден {display}, но ошибка отправки: {e}"
+        return f"❌ Участник «{member_name}» не найден в группе «{target_chat.title}»."
+    except Exception as e:
+        return f"⚠️ Ошибка tg_send_group_member: {e}"
 
 async def tg_read(recipient: str, limit: int = 5) -> str:
     """Прочитать последние сообщения из чата через личный аккаунт."""
@@ -369,44 +469,6 @@ async def tg_read(recipient: str, limit: int = 5) -> str:
         return "📨 Последние сообщения:\n\n" + "\n".join(msgs)
     except Exception as e:
         return f"⚠️ Ошибка чтения TG: {e}"
-
-async def tg_inbox(limit: int = 30) -> str:
-    """Показать последние входящие сообщения по всем диалогам (как inbox)."""
-    if not userbot:
-        return "⚠️ Userbot не подключён."
-    try:
-        from datetime import datetime, timezone
-        msgs = []
-        count = 0
-        async for dialog in userbot.get_dialogs():
-            count += 1
-            if count > 100:
-                break
-            chat = dialog.chat
-            if not dialog.top_message:
-                continue
-            msg = dialog.top_message
-            # Только входящие (не от себя)
-            if msg.outgoing:
-                continue
-            content = (msg.text or msg.caption or "[медиа]")[:200]
-            title = chat.title or f"{getattr(chat,'first_name','')} {getattr(chat,'last_name','')}".strip()
-            # Время
-            msg_time = msg.date.strftime("%H:%M") if msg.date else "?"
-            sender = ""
-            if msg.from_user:
-                sender = f"{msg.from_user.first_name or ''} {msg.from_user.last_name or ''}".strip()
-            msgs.append((msg.date, f"🕐 {msg_time} | 💬 {title}" + (f" | от: {sender}" if sender and sender != title else "") + f"\n{content}\nchat_id:{chat.id}"))
-            if len(msgs) >= limit:
-                break
-        if not msgs:
-            return "📭 Новых входящих сообщений нет."
-        msgs.sort(key=lambda x: x[0], reverse=True)
-        result = f"📨 Последние {len(msgs)} входящих сообщений:\n\n"
-        result += "\n\n".join(m[1] for m in msgs)
-        return result
-    except Exception as e:
-        return f"⚠️ Ошибка чтения inbox: {e}"
 
 async def tg_read_group(group_name: str, limit: int = 100) -> str:
     """Найти группу по названию и прочитать последние сообщения."""
@@ -442,73 +504,6 @@ async def tg_read_group(group_name: str, limit: int = 100) -> str:
         return f"📋 Группа «{target_chat.title}» — последние {len(msgs)} сообщений:\n\n" + "\n\n".join(msgs)
     except Exception as e:
         return f"⚠️ Ошибка чтения группы: {e}"
-
-async def tg_group_members(group_name: str, search_name: str = "") -> str:
-    """Найти участников группы по названию, опционально отфильтровать по имени."""
-    if not userbot:
-        return "⚠️ Userbot не подключён."
-    try:
-        # Ищем группу
-        target_chat = None
-        async for dialog in userbot.get_dialogs():
-            chat = dialog.chat
-            if group_name.lower() in (chat.title or "").lower():
-                target_chat = chat
-                break
-        if not target_chat:
-            return f"❌ Группа «{group_name}» не найдена."
-        # Получаем участников
-        members = []
-        async for member in userbot.get_chat_members(target_chat.id):
-            user = member.user
-            if user.is_bot or user.is_deleted:
-                continue
-            first = user.first_name or ""
-            last = user.last_name or ""
-            full = f"{first} {last}".strip()
-            username = f"@{user.username}" if user.username else f"id:{user.id}"
-            # Фильтр по имени если задан
-            if search_name and search_name.lower() not in full.lower():
-                continue
-            members.append(f"👤 {full} | {username} | id:{user.id}")
-            if len(members) >= 20:
-                break
-        if not members:
-            return f"❌ Участник «{search_name}» не найден в группе «{target_chat.title}»."
-        label = f"по «{search_name}»" if search_name else "все"
-        return f"👥 Участники группы «{target_chat.title}» ({label}):\n\n" + "\n".join(members)
-    except Exception as e:
-        return f"⚠️ Ошибка получения участников: {e}"
-
-async def tg_find_contact(name: str) -> str:
-    """Найти контакт по имени/фамилии/username среди ВСЕХ диалогов."""
-    if not userbot:
-        return "⚠️ Userbot не подключён."
-    try:
-        found = []
-        words = [w.lower() for w in name.split() if len(w) > 2]
-        checked = 0
-        async for dialog in userbot.get_dialogs():
-            checked += 1
-            if checked > 500:  # Ищем среди 500 диалогов
-                break
-            chat = dialog.chat
-            title = chat.title or ""
-            first = getattr(chat, "first_name", "") or ""
-            last = getattr(chat, "last_name", "") or ""
-            username = getattr(chat, "username", "") or ""
-            full = f"{first} {last}".strip()
-            search_str = f"{full} {title} {username}".lower()
-            if any(w in search_str for w in words):
-                contact_id = f"@{username}" if username else str(chat.id)
-                found.append(f"👤 {full or title} | {contact_id} | id:{chat.id}")
-                if len(found) >= 5:
-                    break
-        if not found:
-            return f"❌ Контакт «{name}» не найден среди {checked} диалогов."
-        return f"🔎 Найдено по «{name}»:\n\n" + "\n".join(found)
-    except Exception as e:
-        return f"⚠️ Ошибка поиска контакта: {e}"
 
 async def tg_search(query: str, limit: int = 10) -> str:
     """Поиск сообщений по всем чатам через личный аккаунт."""
@@ -581,8 +576,8 @@ async def claude_call(uid):
 async def process_commands(reply, update, uid, depth=0):
     """
     Разбирает и выполняет команды в ответе Claude.
-    После EMAIL_SEARCH результаты автоматически возвращаются в Claude —
-    он может сразу выполнить EMAIL_SEND без участия пользователя.
+    Атомарные TG команды (TG_SEND_TO, TG_REPLY_INBOX, TG_SEND_GROUP_MEMBER) —
+    код сам делает всё, без промежуточных вызовов Claude.
     """
     MAX_DEPTH = 3
 
@@ -636,7 +631,7 @@ async def process_commands(reply, update, uid, depth=0):
                 "content": f"[РЕЗУЛЬТАТ ПОИСКА]\n{result}\n\nЕсли нужно — выполни следующий шаг."
             })
             follow_up = await claude_call(uid)
-            if re.search(r'\[EMAIL_SEND:|EMAIL_DELETE|EMAIL_DELETE_FROM:|TG_SEND:|TG_READ:', follow_up):
+            if re.search(r'\[EMAIL_SEND:|EMAIL_DELETE|EMAIL_DELETE_FROM:|TG_SEND:', follow_up):
                 await process_commands(follow_up, update, uid, depth=depth + 1)
             else:
                 follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[EMAIL_CHECK\]', '', follow_up).strip()
@@ -668,6 +663,41 @@ async def process_commands(reply, update, uid, depth=0):
             await update.message.reply_text(f"⚠️ {e}")
         return True
 
+    # --- Атомарные TG команды (код делает всё сам, без Claude в середине) ---
+
+    m = re.search(r'\[TG_SEND_TO:([^:]+):(.+)\]', reply, re.DOTALL)
+    if m:
+        name = m.group(1).strip()
+        text = m.group(2).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"📤 Ищу контакт и отправляю...")
+        result = await tg_send_to(name, text)
+        await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[TG_REPLY_INBOX:([^:]+):(.+)\]', reply, re.DOTALL)
+    if m:
+        description = m.group(1).strip()
+        text = m.group(2).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"📤 Ищу входящее от «{description}» и отвечаю...")
+        result = await tg_reply_inbox(description, text)
+        await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[TG_SEND_GROUP_MEMBER:([^:]+):([^:]+):(.+)\]', reply, re.DOTALL)
+    if m:
+        group_name = m.group(1).strip()
+        member_name = m.group(2).strip()
+        text = m.group(3).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"📤 Ищу «{member_name}» в группе «{group_name}»...")
+        result = await tg_send_group_member(group_name, member_name, text)
+        await update.message.reply_text(result)
+        return True
+
+    # --- Стандартные TG команды ---
+
     m = re.search(r'\[TG_SEND:([^\]]+)\]', reply)
     if m:
         parts = m.group(1).split(":", 1)
@@ -694,29 +724,6 @@ async def process_commands(reply, update, uid, depth=0):
         await update.message.reply_text(result)
         return True
 
-    if "[TG_INBOX]" in reply:
-        if clean: await update.message.reply_text(clean)
-        await update.message.reply_text("📨 Проверяю входящие...")
-        result = await tg_inbox()
-        if depth < MAX_DEPTH:
-            histories[uid].append({
-                "role": "user",
-                "content": (
-                    f"[ВХОДЯЩИЕ СООБЩЕНИЯ]\n{result}\n\n"
-                    "ИНСТРУКЦИЯ: Найди нужного отправителя. "
-                    "У каждого сообщения есть chat_id: — используй его НАПРЯМУЮ в TG_SEND без поиска через TG_FIND_CONTACT. "
-                    "Формат: [TG_SEND:chat_id:текст]. "
-                    "Пользователю НЕ показывай список сообщений — только скажи кому пишешь."
-                )
-            })
-            follow_up = await claude_call(uid)
-            if re.search(r'\[TG_SEND:|TG_FIND_CONTACT:|TG_GROUP_MEMBERS:', follow_up):
-                await process_commands(follow_up, update, uid, depth=depth + 1)
-            else:
-                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[TG_INBOX\]', '', follow_up).strip()
-                if follow_clean: await update.message.reply_text(follow_clean)
-        return True
-
     m = re.search(r'\[TG_READ_GROUP:([^\]]+)\]', reply)
     if m:
         group_name = m.group(1).strip()
@@ -735,45 +742,6 @@ async def process_commands(reply, update, uid, depth=0):
             analysis = await claude_call(uid)
             analysis_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', analysis).strip()
             if analysis_clean: await update.message.reply_text(analysis_clean)
-        return True
-
-    m = re.search(r'\[TG_GROUP_MEMBERS:([^\]]+)\]', reply)
-    if m:
-        parts = m.group(1).split(":", 1)
-        group_name = parts[0].strip()
-        search_name = parts[1].strip() if len(parts) > 1 else ""
-        if clean: await update.message.reply_text(clean)
-        result = await tg_group_members(group_name, search_name)
-        await update.message.reply_text(result)
-        if depth < MAX_DEPTH and "👤" in result:
-            histories[uid].append({
-                "role": "user",
-                "content": f"[УЧАСТНИК ГРУППЫ НАЙДЕН]\n{result}\n\nВыполни следующий шаг."
-            })
-            follow_up = await claude_call(uid)
-            if re.search(r'\[TG_SEND:|TG_GROUP_MEMBERS:', follow_up):
-                await process_commands(follow_up, update, uid, depth=depth + 1)
-            else:
-                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
-                if follow_clean: await update.message.reply_text(follow_clean)
-        return True
-
-    m = re.search(r'\[TG_FIND_CONTACT:([^\]]+)\]', reply)
-    if m:
-        if clean: await update.message.reply_text(clean)
-        result = await tg_find_contact(m.group(1).strip())
-        await update.message.reply_text(result)
-        if depth < MAX_DEPTH and "👤" in result:
-            histories[uid].append({
-                "role": "user",
-                "content": f"[РЕЗУЛЬТАТ ПОИСКА КОНТАКТА]\n{result}\n\nКонтакт найден. Используй id для TG_SEND и выполни задачу."
-            })
-            follow_up = await claude_call(uid)
-            if re.search(r'\[TG_SEND:|TG_GROUP_MEMBERS:', follow_up):
-                await process_commands(follow_up, update, uid, depth=depth + 1)
-            else:
-                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
-                if follow_clean: await update.message.reply_text(follow_clean)
         return True
 
     return False
