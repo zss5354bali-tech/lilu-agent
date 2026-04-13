@@ -232,34 +232,57 @@ def web_search(query: str, max_results: int = 8) -> str:
     return "⚠️ Поиск недоступен. Добавьте TAVILY_API_KEY в переменные Railway (бесплатно на tavily.com)."
 
 def imap_connect():
-    m = imaplib.IMAP4_SSL(IMAP_SERVER)
+    m = imaplib.IMAP4_SSL(IMAP_SERVER, 993)
     m.login(MAIL_EMAIL, MAIL_PASSWORD)
     m.select("INBOX")
     return m
 
-def get_emails(uid, limit=5):
+def get_emails(uid, limit=5, unread_only=True):
     try:
         m = imap_connect()
-        _, data = m.search(None, "UNSEEN")
+        _, data = m.search(None, "UNSEEN" if unread_only else "ALL")
         ids = data[0].split()
         if not ids:
             m.logout()
             return "📭 Новых писем нет."
-        result = f"📬 Новых писем: {len(ids)}\n\n"
+        result = f"📬 {'Новых' if unread_only else 'Последних'} писем: {len(ids)}\n\n"
         last_emails[uid] = []
         for i, mid in enumerate(ids[-limit:]):
             _, md = m.fetch(mid, "(RFC822)")
             msg = email.message_from_bytes(md[0][1])
             subj = decode_str(msg.get("Subject", "Без темы"))
-            frm = decode_str(msg.get("From", ""))
-            date = msg.get("Date", "")[:16]
+            frm_raw = decode_str(msg.get("From", ""))
+            # Извлекаем имя и адрес
+            if "<" in frm_raw:
+                frm_name = frm_raw.split("<")[0].strip().strip('"')
+                frm_addr = frm_raw.split("<")[1].rstrip(">").strip()
+            else:
+                frm_name = frm_raw
+                frm_addr = frm_raw
+            # Парсим дату
+            date_raw = msg.get("Date", "")
+            try:
+                import email.utils as email_utils
+                date_parsed = email_utils.parsedate_to_datetime(date_raw)
+                date_str = date_parsed.strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                date_str = date_raw[:16] if date_raw else "?"
             body = get_body(msg)
-            last_emails[uid].append({"id": mid, "subject": subj, "from": frm})
-            result += f"{i+1}. *{subj}*\nОт: {frm}\n{date}\n{body}\n\n"
+            last_emails[uid].append({"id": mid, "subject": subj, "from": frm_raw, "email": frm_addr})
+            result += f"{i+1}. {subj}\nОт: {frm_name} <{frm_addr}>\n{date_str}\n{body[:300]}\n\n"
         m.logout()
         return result
+    except imaplib.IMAP4.error as e:
+        err = str(e)
+        logger.error(f"IMAP error: {err}")
+        if "AUTHENTICATIONFAILED" in err or "Invalid credentials" in err:
+            return ("⚠️ Ошибка авторизации mail.ru.\n\n"
+                    "Нужен пароль приложения (не основной пароль):\n"
+                    "mail.ru → Настройки → Безопасность → Пароли приложений → Создать")
+        return f"⚠️ Ошибка IMAP: {err}"
     except Exception as e:
-        return f"⚠️ Ошибка чтения: {e}"
+        logger.error(f"Email read error: {e}")
+        return f"⚠️ Ошибка чтения почты: {e}"
 
 def search_emails(uid, query, limit=5):
     try:
