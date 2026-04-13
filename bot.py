@@ -713,6 +713,36 @@ async def tg_get_unread(limit: int = 15) -> list:
             break
     return unread
 
+async def _claude_request(system: str, messages: list) -> str:
+    """Базовый вызов Claude API с retry при перегрузке (до 3 попыток)."""
+    last_err = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                    json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": messages}
+                )
+            data = r.json()
+            if "content" in data:
+                return data["content"][0]["text"]
+            err_type = data.get("error", {}).get("type", "")
+            err_msg = data.get("error", {}).get("message", str(data))
+            logger.error(f"Claude error (attempt {attempt+1}): {err_msg}")
+            if err_type == "overloaded_error":
+                wait = (attempt + 1) * 5
+                logger.info(f"Overloaded, retry in {wait}s...")
+                await asyncio.sleep(wait)
+                last_err = "Серверы Anthropic перегружены, попробуйте через минуту."
+                continue
+            raise Exception(err_msg)
+        except httpx.TimeoutException:
+            logger.warning(f"Claude timeout (attempt {attempt+1})")
+            last_err = "Таймаут запроса к Claude API."
+            await asyncio.sleep(3)
+    raise Exception(last_err or "Claude недоступен.")
+
 async def ask_claude(uid, message, image_data=None):
     if uid not in histories:
         histories[uid] = []
@@ -728,37 +758,17 @@ async def ask_claude(uid, message, image_data=None):
     histories[uid].append({"role": "user", "content": content})
     if len(histories[uid]) > 40:
         histories[uid] = histories[uid][-40:]
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": histories[uid]}
-        )
-        data = r.json()
-        if "content" not in data:
-            logger.error(f"Claude error: {data}")
-            raise Exception(data.get("error", {}).get("message", str(data)))
-        reply = data["content"][0]["text"]
-        histories[uid].append({"role": "assistant", "content": reply})
-        return reply
+    reply = await _claude_request(system, histories[uid])
+    histories[uid].append({"role": "assistant", "content": reply})
+    return reply
 
 async def claude_call(uid):
     """Вызов Claude с текущей историей без добавления нового сообщения."""
     mem_str = json.dumps(memory.get(uid, {}), ensure_ascii=False) if memory.get(uid) else "пусто"
     system = SYSTEM_PROMPT.replace("{memory}", mem_str)
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": histories[uid]}
-        )
-        data = r.json()
-        if "content" not in data:
-            logger.error(f"Claude error: {data}")
-            raise Exception(data.get("error", {}).get("message", str(data)))
-        reply = data["content"][0]["text"]
-        histories[uid].append({"role": "assistant", "content": reply})
-        return reply
+    reply = await _claude_request(system, histories[uid])
+    histories[uid].append({"role": "assistant", "content": reply})
+    return reply
 
 async def process_commands(reply, update, uid, depth=0):
     """
