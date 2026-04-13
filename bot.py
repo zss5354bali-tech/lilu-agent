@@ -33,6 +33,8 @@ TG_SESSION_STRING = os.getenv("TG_SESSION_STRING", "")
 TG_API_ID = int(os.getenv("TG_API_ID", "35529109"))
 TG_API_HASH = os.getenv("TG_API_HASH", "8c2fc8ca860c843db14a42a2a1d12dfd")
 
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
 IMAP_SERVER = "imap.mail.ru"
 
 # Per-user state
@@ -193,7 +195,27 @@ def get_body(msg):
     return re.sub(r'\s+', ' ', body).strip()[:400]
 
 def web_search(query: str, max_results: int = 8) -> str:
-    """Поиск через DuckDuckGo с автопереключением бэкендов при rate limit."""
+    """Поиск через Tavily API (основной) с резервом на DuckDuckGo."""
+    # Основной: Tavily — стабильный платный API, не блокирует
+    if TAVILY_API_KEY:
+        try:
+            with httpx.Client(timeout=15) as client:
+                r = client.post(
+                    "https://api.tavily.com/search",
+                    json={"api_key": TAVILY_API_KEY, "query": query,
+                          "max_results": max_results, "search_depth": "basic"}
+                )
+            data = r.json()
+            results = data.get("results", [])
+            if results:
+                out = f"🌐 Результаты поиска «{query}»:\n\n"
+                for item in results:
+                    out += f"**{item.get('title','')}**\n{item.get('content','')}\n{item.get('url','')}\n\n"
+                return out.strip()
+        except Exception as e:
+            logger.warning(f"Tavily error: {e}")
+
+    # Резерв: DuckDuckGo (может блокироваться на Railway)
     for backend in ["lite", "html", "api"]:
         try:
             with DDGS() as ddgs:
@@ -206,7 +228,8 @@ def web_search(query: str, max_results: int = 8) -> str:
             return out.strip()
         except Exception:
             continue
-    return f"⚠️ Поиск временно недоступен — DuckDuckGo заблокировал запросы (rate limit). Попробуйте повторить через минуту."
+
+    return "⚠️ Поиск недоступен. Добавьте TAVILY_API_KEY в переменные Railway (бесплатно на tavily.com)."
 
 def imap_connect():
     m = imaplib.IMAP4_SSL(IMAP_SERVER)
