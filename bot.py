@@ -8,6 +8,8 @@ import smtplib
 import email
 import json
 import re
+import datetime
+import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import decode_header
@@ -43,8 +45,34 @@ voice_mode = {}   # voice/text mode
 memory = {}       # permanent memory
 last_emails = {}  # last fetched emails for deletion
 
+# Per-user pending email drafts
+pending_drafts = {}  # uid -> {"num": N, "email_data": {...}, "text": "..."}
+
 # Pyrogram userbot client (global)
 userbot: PyrogramClient | None = None
+
+MORNING_QUOTES = [
+    "Успех — это сумма небольших усилий, повторяемых день за днём.",
+    "Риск приходит от незнания того, что ты делаешь. — Уоррен Баффет",
+    "Не жди идеального момента. Возьми момент и сделай его идеальным.",
+    "Кто хочет — ищет возможности. Кто не хочет — ищет причины.",
+    "Делай сегодня то, что другие не хотят — завтра живи так, как другие не могут.",
+    "Фокус решает всё. Один приоритет лучше десяти.",
+    "Дисциплина — это свобода. Хаос — это тюрьма.",
+    "Идеи без действий — просто мечты.",
+    "Инвестиции в знания дают лучший процент. — Бенджамин Франклин",
+    "Скорость — это стратегия. Кто быстрее — тот выигрывает.",
+    "Репутация строится годами, разрушается за секунды.",
+    "Простота — высшая степень изощрённости. — Леонардо да Винчи",
+    "Главный конкурент — вчерашняя версия тебя самого.",
+    "Хочешь изменить результат — измени действия.",
+    "Лучшее время начать — сейчас.",
+    "Продавай решения, а не продукты.",
+    "Сеть контактов — актив номер один в бизнесе.",
+    "Тот, кто говорит невозможно, не должен мешать тому, кто делает.",
+    "Деньги любят тех, кто к ним серьёзно относится.",
+    "Слушай клиента вдвое больше, чем говоришь — два уха, один рот.",
+]
 
 SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент Сергея Сергеевича Жмакова.
 
@@ -72,10 +100,13 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 - Запоминаешь важную информацию навсегда
 - Анализируешь фото и документы
 
-ВЕБ-ПОИСК:
+ВЕБ-ПОИСК И СТРАНИЦЫ:
 [WEB_SEARCH:поисковый запрос] — найти информацию в интернете
-Используй для: контакты компаний, актуальные данные, адреса, телефоны, email, новости, цены, любая информация из интернета.
-Всегда используй [WEB_SEARCH] когда нужно найти что-то в интернете — НЕ говори "у меня нет доступа к интернету"!
+[FETCH_URL:https://сайт.com] — открыть конкретную страницу и прочитать её содержимое
+Используй для: контакты компаний, актуальные данные, адреса, телефоны, email, новости, цены, погода, курсы валют.
+Всегда используй [WEB_SEARCH] или [FETCH_URL] — НЕ говори "у меня нет доступа к интернету"!
+Погода: [FETCH_URL:https://wttr.in/Bali?lang=ru]
+Курсы ЦБ: [FETCH_URL:https://www.cbr.ru/currency_base/daily/]
 
 ПОЧТОВЫЕ КОМАНДЫ (вставляй команду в ответ когда нужно):
 [EMAIL_CHECK] — проверить новые письма
@@ -107,6 +138,10 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 - Деловой но человеческий тон
 - Русский язык, иногда английские термины
 - Никаких смайлов и лишних слов вроде "конечно", "разумеется", "безусловно"
+
+РАБОТА С ПИСЬМАМИ (черновики):
+[EMAIL_DRAFT:N:текст] — предложить черновик ответа на письмо N (пользователь скажет "да" → отправится)
+Когда просят ответить на письмо — ВСЕГДА сначала предлагай черновик через [EMAIL_DRAFT], не отправляй сразу!
 
 ЛОГИКА ОТПРАВКИ ПИСЬМА:
 Когда просят отправить письмо конкретному человеку (например "Кравченко"):
@@ -230,6 +265,26 @@ def web_search(query: str, max_results: int = 8) -> str:
             continue
 
     return "⚠️ Поиск недоступен. Добавьте TAVILY_API_KEY в переменные Railway (бесплатно на tavily.com)."
+
+def fetch_url(url: str, max_chars: int = 4000) -> str:
+    """Открыть веб-страницу и вернуть текстовое содержимое. Fallback на Jina.ai для JS-страниц."""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    try:
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(url, headers=headers)
+        text = strip_html(resp.text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        if len(text) >= 200:
+            return text[:max_chars]
+    except Exception:
+        pass
+    # Fallback: Jina.ai читает JS-страницы
+    try:
+        with httpx.Client(timeout=25) as client:
+            resp = client.get(f"https://r.jina.ai/{url}", headers=headers)
+        return resp.text[:max_chars]
+    except Exception as e:
+        return f"⚠️ Не удалось открыть страницу: {e}"
 
 def imap_connect():
     m = imaplib.IMAP4_SSL(IMAP_SERVER, 993)
@@ -730,6 +785,46 @@ async def process_commands(reply, update, uid, depth=0):
                 if follow_clean: await update.message.reply_text(follow_clean)
         return True
 
+    m = re.search(r'\[FETCH_URL:([^\]]+)\]', reply)
+    if m:
+        url = m.group(1).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"🌐 Открываю страницу...")
+        content = fetch_url(url)
+        if depth < MAX_DEPTH:
+            histories[uid].append({
+                "role": "user",
+                "content": f"[СОДЕРЖИМОЕ СТРАНИЦЫ {url}]\n{content}\n\nОтветь по существу задачи."
+            })
+            follow_up = await claude_call(uid)
+            follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
+            if follow_clean: await update.message.reply_text(follow_clean)
+        else:
+            await update.message.reply_text(content[:4000])
+        return True
+
+    m = re.search(r'\[EMAIL_DRAFT:(\d+):(.+)\]', reply, re.DOTALL)
+    if m:
+        try:
+            num = int(m.group(1))
+            draft_text = m.group(2).strip()
+            if clean: await update.message.reply_text(clean)
+            email_data = last_emails.get(uid, [])
+            if email_data and 1 <= num <= len(email_data):
+                em = email_data[num - 1]
+                pending_drafts[uid] = {"num": num, "email_data": em, "text": draft_text}
+                await update.message.reply_text(
+                    f"✉️ Черновик ответа на письмо {num} ({em.get('from','?')}):\n\n"
+                    f"{'─'*30}\n{draft_text}\n{'─'*30}\n\n"
+                    f"Напишите «да» чтобы отправить, или дайте свой вариант текста."
+                )
+            else:
+                await update.message.reply_text(f"✉️ Черновик:\n\n{draft_text}\n\nНапишите «да» для отправки.")
+                pending_drafts[uid] = {"num": num, "email_data": None, "text": draft_text}
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Ошибка черновика: {e}")
+        return True
+
     if "[EMAIL_CHECK]" in reply:
         if clean: await update.message.reply_text(clean)
         await update.message.reply_text(get_emails(uid), parse_mode="Markdown")
@@ -900,6 +995,63 @@ async def process_commands(reply, update, uid, depth=0):
 
     return False
 
+async def morning_digest(context):
+    """Утренний дайджест: погода, курсы, письма, цитата."""
+    uid = OWNER_ID
+    today = datetime.date.today()
+    quote = MORNING_QUOTES[today.timetuple().tm_yday % len(MORNING_QUOTES)]
+    days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    day_str = today.strftime("%d.%m.%Y") + f" ({days_ru[today.weekday()]})"
+
+    # Погода на Бали
+    weather = ""
+    try:
+        with httpx.Client(timeout=8) as client:
+            r = client.get("https://wttr.in/Bali?format=%c+%C,+%t+%w&lang=ru")
+        if r.status_code == 200:
+            weather = r.text.strip()
+    except Exception:
+        pass
+
+    # Курсы ЦБ (USD, EUR)
+    rates = ""
+    try:
+        with httpx.Client(timeout=8) as client:
+            r = client.get("https://www.cbr.ru/scripts/XML_daily.asp")
+        root = ET.fromstring(r.content)
+        usd = eur = ""
+        for v in root.findall("Valute"):
+            code = v.find("CharCode").text
+            val = float(v.find("Value").text.replace(",", "."))
+            nom = int(v.find("Nominal").text)
+            rate = val / nom
+            if code == "USD": usd = f"💵 {rate:.2f}₽"
+            elif code == "EUR": eur = f"💶 {rate:.2f}₽"
+        rates = "  ".join(filter(None, [usd, eur]))
+    except Exception:
+        pass
+
+    # Новые письма
+    email_part = ""
+    try:
+        emails_text = get_emails(uid, limit=3)
+        if "📭" not in emails_text and "⚠️" not in emails_text:
+            email_part = emails_text[:600]
+    except Exception:
+        pass
+
+    lines = [f"☀️ Доброе утро, Сергей Сергеевич!\n📅 {day_str}"]
+    if weather: lines.append(f"🌤 {weather}")
+    if rates: lines.append(rates)
+    lines.append(f"\n💬 «{quote}»")
+    if email_part: lines.append(f"\n{email_part}")
+    else: lines.append("\n📭 Новых писем нет.")
+
+    try:
+        await context.bot.send_message(chat_id=uid, text="\n".join(lines))
+    except Exception as e:
+        logger.error(f"Morning digest error: {e}")
+
 async def transcribe(voice_bytes):
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
@@ -988,6 +1140,19 @@ async def mail_cmd(update, ctx):
 async def handle_text(update, ctx):
     uid = update.effective_user.id
     if not is_owner(uid): return
+
+    # Проверка подтверждения черновика письма
+    msg = update.message.text.strip().lower()
+    if uid in pending_drafts and re.match(r'^(да|ок|окей|отправляй|отправить|send|yes)[\.\!]?$', msg):
+        draft = pending_drafts.pop(uid)
+        em = draft.get("email_data")
+        if em and em.get("email"):
+            result = send_email(em["email"], f"Re: {em.get('subject','')}", draft["text"])
+            await update.message.reply_text(result)
+        else:
+            await update.message.reply_text("⚠️ Нет данных получателя для отправки.")
+        return
+
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
     try:
         reply = await ask_claude(uid, update.message.text)
@@ -1064,6 +1229,15 @@ async def main_async():
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Утренний дайджест — 08:00 по Бали (UTC+8 = 00:00 UTC)
+    if OWNER_ID:
+        app.job_queue.run_daily(
+            morning_digest,
+            time=datetime.time(0, 0, 0, tzinfo=datetime.timezone.utc),
+            chat_id=OWNER_ID
+        )
+        logger.info("Утренний дайджест запланирован на 08:00 Бали.")
 
     print("Lilu запущена.")
     async with app:
