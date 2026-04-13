@@ -827,7 +827,7 @@ async def process_commands(reply, update, uid, depth=0):
 
     if "[EMAIL_CHECK]" in reply:
         if clean: await update.message.reply_text(clean)
-        await update.message.reply_text(get_emails(uid), parse_mode="Markdown")
+        await update.message.reply_text(get_emails(uid), parse_mode=None)
         return True
 
     m = re.search(r'\[EMAIL_SEARCH:([^\]]+)\]', reply)
@@ -835,7 +835,7 @@ async def process_commands(reply, update, uid, depth=0):
         query = m.group(1).strip()
         if clean: await update.message.reply_text(clean)
         result = search_emails(uid, query)
-        await update.message.reply_text(result, parse_mode="Markdown")
+        await update.message.reply_text(result, parse_mode=None)
         # Возвращаем результат поиска в Claude — он сам отправит письмо
         if depth < MAX_DEPTH:
             histories[uid].append({
@@ -1135,7 +1135,7 @@ async def memory_cmd(update, ctx):
 async def mail_cmd(update, ctx):
     if not is_owner(update.effective_user.id): return
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
-    await update.message.reply_text(get_emails(update.effective_user.id), parse_mode="Markdown")
+    await update.message.reply_text(get_emails(update.effective_user.id), parse_mode=None)
 
 async def handle_text(update, ctx):
     uid = update.effective_user.id
