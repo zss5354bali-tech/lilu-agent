@@ -550,11 +550,13 @@ async def tg_send_group_member(group_name: str, member_name: str, text: str) -> 
     group_name = group_name.strip()
     member_name = member_name.strip()
     try:
-        # Ищем группу
+        # Ищем группу по словам (любой порядок слов)
         target_chat = None
+        words = [w.lower() for w in group_name.split() if len(w) > 1]
         async for dialog in userbot.get_dialogs():
             chat = dialog.chat
-            if group_name.lower() in (chat.title or "").lower():
+            title = (chat.title or "").lower()
+            if all(w in title for w in words):
                 target_chat = chat
                 break
         if not target_chat:
@@ -606,13 +608,13 @@ async def tg_read_group(group_name: str, limit: int = 100) -> str:
     if not userbot:
         return "⚠️ Userbot не подключён."
     try:
-        # Ищем группу по названию
+        # Ищем группу по словам (любой порядок слов)
         target_chat = None
-        name_lower = group_name.lower()
+        words = [w.lower() for w in group_name.split() if len(w) > 1]
         async for dialog in userbot.get_dialogs():
             chat = dialog.chat
-            title = chat.title or ""
-            if name_lower in title.lower():
+            title = (chat.title or "").lower()
+            if all(w in title for w in words):
                 target_chat = chat
                 break
         if not target_chat:
