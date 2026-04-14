@@ -41,7 +41,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 RAILWAY_PROJECT_ID = os.getenv("RAILWAY_PROJECT_ID", "2bbae21a-1833-44d6-ab3a-3e8dd1382074")
 RAILWAY_SERVICE_ID = os.getenv("RAILWAY_SERVICE_ID", "906cfc5a-e237-4cde-9136-bcd518e7a45b")
 RAILWAY_ENVIRONMENT_ID = os.getenv("RAILWAY_ENVIRONMENT_ID", "")
-GITHUB_REPO = os.getenv("GITHUB_REPO", "")  # e.g. "username/lilu-bot"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "zss5354bali-tech/lilu-agent")
 
 IMAP_SERVER = "imap.mail.ru"
 
@@ -505,13 +505,13 @@ def railway_gql(query: str, variables: dict = None) -> dict:
 def railway_status() -> str:
     """Получить статус деплоя сервиса."""
     q = """
-    query($serviceId: String!, $environmentId: String) {
-      deployments(serviceId: $serviceId, environmentId: $environmentId, first: 3) {
-        edges { node { id status createdAt meta { deployTrigger } } }
+    query($serviceId: String!) {
+      deployments(input: { serviceId: $serviceId }, first: 3) {
+        edges { node { id status createdAt } }
       }
     }
     """
-    data = railway_gql(q, {"serviceId": RAILWAY_SERVICE_ID, "environmentId": RAILWAY_ENVIRONMENT_ID or None})
+    data = railway_gql(q, {"serviceId": RAILWAY_SERVICE_ID})
     if "error" in data:
         return f"⚠️ Railway API: {data['error']}"
     edges = data.get("deployments", {}).get("edges", [])
@@ -533,7 +533,7 @@ def railway_redeploy() -> str:
     # Сначала получим последний deployment id
     q_get = """
     query($serviceId: String!) {
-      deployments(serviceId: $serviceId, first: 1) {
+      deployments(input: { serviceId: $serviceId }, first: 1) {
         edges { node { id } }
       }
     }
