@@ -36,6 +36,12 @@ TG_API_ID = int(os.getenv("TG_API_ID", "35529109"))
 TG_API_HASH = os.getenv("TG_API_HASH", "8c2fc8ca860c843db14a42a2a1d12dfd")
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+RAILWAY_API_TOKEN = os.getenv("RAILWAY_API_TOKEN", "")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+RAILWAY_PROJECT_ID = os.getenv("RAILWAY_PROJECT_ID", "2bbae21a-1833-44d6-ab3a-3e8dd1382074")
+RAILWAY_SERVICE_ID = os.getenv("RAILWAY_SERVICE_ID", "906cfc5a-e237-4cde-9136-bcd518e7a45b")
+RAILWAY_ENVIRONMENT_ID = os.getenv("RAILWAY_ENVIRONMENT_ID", "")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "")  # e.g. "username/lilu-bot"
 
 IMAP_SERVER = "imap.mail.ru"
 
@@ -165,6 +171,22 @@ TELEGRAM КОМАНДЫ (через личный аккаунт):
 - Если дают токен бота — используй ТОЛЬКО этот токен, никакой другой
 - Если дают API ключ или credentials — используй именно их, не подставляй другие
 - Всегда явно подтверждай какой токен/ключ используешь в коде
+
+RAILWAY И GITHUB (полное управление):
+[RAILWAY_STATUS] — проверить статус последних деплоев
+[RAILWAY_DEPLOY] — перезапустить деплой (redeploy)
+[RAILWAY_SET_VAR:КЛЮЧ:ЗНАЧЕНИЕ] — установить переменную окружения в Railway
+[RAILWAY_GET_VARS] — посмотреть все переменные Railway
+[GITHUB_REPOS] — список репозиториев на GitHub
+[GITHUB_GET:user/repo:путь/к/файлу] — прочитать файл из GitHub
+[GITHUB_PUSH:user/repo:путь/к/файлу:содержимое файла:сообщение коммита] — создать/обновить файл в GitHub
+
+Примеры использования:
+- "Что с ботом?" / "Статус Railway" → [RAILWAY_STATUS]
+- "Перезапусти бота" / "задеплой" → [RAILWAY_DEPLOY]
+- "Добавь переменную X=Y" → [RAILWAY_SET_VAR:X:Y]
+- "Покажи мои репозитории" → [GITHUB_REPOS]
+- "Загрузи bot.py на GitHub" → [GITHUB_PUSH:user/repo:bot.py:...код...]
 
 ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
 {memory}
@@ -455,6 +477,252 @@ def send_email(to, subject, body):
         return f"⚠️ Ошибка Brevo: {r.json().get('message', r.text)}"
     except Exception as e:
         return f"⚠️ Ошибка отправки: {e}"
+
+# ═══════════════════════════════════════════════════
+#  RAILWAY API  (GraphQL v2)
+# ═══════════════════════════════════════════════════
+
+def railway_gql(query: str, variables: dict = None) -> dict:
+    """Выполнить GraphQL-запрос к Railway API."""
+    if not RAILWAY_API_TOKEN:
+        return {"error": "RAILWAY_API_TOKEN не задан"}
+    try:
+        with httpx.Client(timeout=20) as client:
+            r = client.post(
+                "https://backboard.railway.com/graphql/v2",
+                headers={"Authorization": f"Bearer {RAILWAY_API_TOKEN}",
+                         "Content-Type": "application/json"},
+                json={"query": query, "variables": variables or {}}
+            )
+        data = r.json()
+        if "errors" in data:
+            return {"error": data["errors"][0].get("message", str(data["errors"]))}
+        return data.get("data", {})
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def railway_status() -> str:
+    """Получить статус деплоя сервиса."""
+    q = """
+    query($serviceId: String!, $environmentId: String) {
+      deployments(serviceId: $serviceId, environmentId: $environmentId, first: 3) {
+        edges { node { id status createdAt meta { deployTrigger } } }
+      }
+    }
+    """
+    data = railway_gql(q, {"serviceId": RAILWAY_SERVICE_ID, "environmentId": RAILWAY_ENVIRONMENT_ID or None})
+    if "error" in data:
+        return f"⚠️ Railway API: {data['error']}"
+    edges = data.get("deployments", {}).get("edges", [])
+    if not edges:
+        return "ℹ️ Деплоев не найдено."
+    lines = ["🚂 Последние деплои Railway:"]
+    for e in edges:
+        n = e["node"]
+        status = n.get("status", "?")
+        emoji = {"SUCCESS": "✅", "FAILED": "❌", "BUILDING": "🔨", "DEPLOYING": "🚀",
+                 "CRASHED": "💥", "REMOVED": "🗑️"}.get(status, "⏳")
+        created = n.get("createdAt", "")[:16].replace("T", " ")
+        lines.append(f"{emoji} {status} — {created}")
+    return "\n".join(lines)
+
+
+def railway_redeploy() -> str:
+    """Перезапустить последний деплой сервиса."""
+    # Сначала получим последний deployment id
+    q_get = """
+    query($serviceId: String!) {
+      deployments(serviceId: $serviceId, first: 1) {
+        edges { node { id } }
+      }
+    }
+    """
+    data = railway_gql(q_get, {"serviceId": RAILWAY_SERVICE_ID})
+    if "error" in data:
+        return f"⚠️ Railway: {data['error']}"
+    edges = data.get("deployments", {}).get("edges", [])
+    if not edges:
+        return "⚠️ Нет деплоев для перезапуска."
+    dep_id = edges[0]["node"]["id"]
+    q_redeploy = "mutation($id: String!) { deploymentRedeploy(id: $id) { id status } }"
+    result = railway_gql(q_redeploy, {"id": dep_id})
+    if "error" in result:
+        return f"⚠️ Ошибка redeploy: {result['error']}"
+    node = result.get("deploymentRedeploy", {})
+    return f"🚀 Redeploy запущен. ID: {node.get('id','?')}, статус: {node.get('status','?')}"
+
+
+def railway_set_var(key: str, value: str) -> str:
+    """Установить переменную окружения в Railway."""
+    # Нужен environmentId — если не задан, получим его
+    env_id = RAILWAY_ENVIRONMENT_ID
+    if not env_id:
+        q_env = """
+        query($projectId: String!) {
+          project(id: $projectId) {
+            environments { edges { node { id name } } }
+          }
+        }
+        """
+        data = railway_gql(q_env, {"projectId": RAILWAY_PROJECT_ID})
+        envs = data.get("project", {}).get("environments", {}).get("edges", [])
+        for e in envs:
+            if e["node"]["name"] == "production":
+                env_id = e["node"]["id"]
+                break
+        if not env_id and envs:
+            env_id = envs[0]["node"]["id"]
+    if not env_id:
+        return "⚠️ Не удалось найти environment."
+
+    q = """
+    mutation($input: VariableCollectionUpsertInput!) {
+      variableCollectionUpsert(input: $input)
+    }
+    """
+    variables = {
+        "input": {
+            "projectId": RAILWAY_PROJECT_ID,
+            "serviceId": RAILWAY_SERVICE_ID,
+            "environmentId": env_id,
+            "variables": {key: value}
+        }
+    }
+    result = railway_gql(q, variables)
+    if "error" in result:
+        return f"⚠️ Ошибка Railway setVar: {result['error']}"
+    return f"✅ Переменная {key} обновлена в Railway."
+
+
+def railway_get_vars() -> str:
+    """Получить список переменных из Railway."""
+    env_id = RAILWAY_ENVIRONMENT_ID
+    if not env_id:
+        q_env = """
+        query($projectId: String!) {
+          project(id: $projectId) { environments { edges { node { id name } } } }
+        }
+        """
+        data = railway_gql(q_env, {"projectId": RAILWAY_PROJECT_ID})
+        envs = data.get("project", {}).get("environments", {}).get("edges", [])
+        for e in envs:
+            if e["node"]["name"] == "production":
+                env_id = e["node"]["id"]
+                break
+        if not env_id and envs:
+            env_id = envs[0]["node"]["id"]
+    if not env_id:
+        return "⚠️ Не удалось найти environment."
+
+    q = """
+    query($projectId: String!, $serviceId: String!, $environmentId: String!) {
+      variables(projectId: $projectId, serviceId: $serviceId, environmentId: $environmentId)
+    }
+    """
+    data = railway_gql(q, {
+        "projectId": RAILWAY_PROJECT_ID,
+        "serviceId": RAILWAY_SERVICE_ID,
+        "environmentId": env_id
+    })
+    if "error" in data:
+        return f"⚠️ Railway getVars: {data['error']}"
+    vars_dict = data.get("variables", {})
+    if not vars_dict:
+        return "ℹ️ Переменные не найдены."
+    lines = ["🔧 Переменные Railway:"]
+    for k in sorted(vars_dict.keys()):
+        v = vars_dict[k]
+        # Скрываем чувствительные значения
+        if any(x in k.upper() for x in ["TOKEN", "KEY", "SECRET", "PASSWORD", "PASS"]):
+            v = v[:4] + "***" if len(v) > 4 else "***"
+        lines.append(f"  {k}={v}")
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════
+#  GITHUB API
+# ═══════════════════════════════════════════════════
+
+def github_push_file(repo: str, path: str, content: str, message: str = "Update via Lilu") -> str:
+    """Создать или обновить файл в GitHub репозитории."""
+    if not GITHUB_TOKEN:
+        return "⚠️ GITHUB_TOKEN не задан."
+    if not repo:
+        return "⚠️ GITHUB_REPO не задан. Укажи репозиторий в формате user/repo."
+    try:
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"
+        }
+        url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        # Получаем текущий sha файла (если существует)
+        with httpx.Client(timeout=15) as client:
+            existing = client.get(url, headers=headers)
+        sha = existing.json().get("sha") if existing.status_code == 200 else None
+
+        # Кодируем содержимое в base64
+        encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        payload = {"message": message, "content": encoded}
+        if sha:
+            payload["sha"] = sha
+
+        with httpx.Client(timeout=20) as client:
+            r = client.put(url, headers=headers, json=payload)
+        if r.status_code in (200, 201):
+            action = "обновлён" if sha else "создан"
+            return f"✅ Файл {path} {action} в {repo}"
+        return f"⚠️ GitHub ошибка {r.status_code}: {r.json().get('message', r.text[:200])}"
+    except Exception as e:
+        return f"⚠️ GitHub push error: {e}"
+
+
+def github_get_file(repo: str, path: str) -> str:
+    """Прочитать файл из GitHub репозитория."""
+    if not GITHUB_TOKEN:
+        return "⚠️ GITHUB_TOKEN не задан."
+    if not repo:
+        return "⚠️ GITHUB_REPO не задан."
+    try:
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+        url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        with httpx.Client(timeout=15) as client:
+            r = client.get(url, headers=headers)
+        if r.status_code == 200:
+            data = r.json()
+            content = base64.b64decode(data["content"]).decode("utf-8")
+            return f"📄 {path} из {repo}:\n\n{content[:3000]}"
+        return f"⚠️ GitHub {r.status_code}: {r.json().get('message', r.text[:100])}"
+    except Exception as e:
+        return f"⚠️ GitHub get error: {e}"
+
+
+def github_list_repos() -> str:
+    """Получить список репозиториев пользователя."""
+    if not GITHUB_TOKEN:
+        return "⚠️ GITHUB_TOKEN не задан."
+    try:
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+        with httpx.Client(timeout=15) as client:
+            r = client.get("https://api.github.com/user/repos?per_page=20&sort=updated", headers=headers)
+        if r.status_code == 200:
+            repos = r.json()
+            lines = ["📦 GitHub репозитории:"]
+            for repo in repos:
+                private = "🔒" if repo.get("private") else "🌐"
+                lines.append(f"  {private} {repo['full_name']}")
+            return "\n".join(lines)
+        return f"⚠️ GitHub {r.status_code}: {r.json().get('message', r.text[:100])}"
+    except Exception as e:
+        return f"⚠️ GitHub repos error: {e}"
+
 
 async def tg_send(recipient: str, text: str) -> str:
     """Отправить сообщение через личный аккаунт Telegram (точный @username или числовой id)."""
@@ -1016,6 +1284,69 @@ async def process_commands(reply, update, uid, depth=0):
             analysis = await claude_call(uid)
             analysis_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', analysis).strip()
             if analysis_clean: await update.message.reply_text(analysis_clean)
+        return True
+
+    # ─── Railway команды ───────────────────────────────
+
+    if "[RAILWAY_STATUS]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("🚂 Проверяю статус Railway...")
+        result = railway_status()
+        await update.message.reply_text(result)
+        return True
+
+    if "[RAILWAY_DEPLOY]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("🚀 Запускаю redeploy Railway...")
+        result = railway_redeploy()
+        await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[RAILWAY_SET_VAR:([^:]+):([^\]]+)\]', reply)
+    if m:
+        key = m.group(1).strip()
+        value = m.group(2).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"🔧 Устанавливаю переменную {key}...")
+        result = railway_set_var(key, value)
+        await update.message.reply_text(result)
+        return True
+
+    if "[RAILWAY_GET_VARS]" in reply:
+        if clean: await update.message.reply_text(clean)
+        result = railway_get_vars()
+        await update.message.reply_text(result[:4000])
+        return True
+
+    # ─── GitHub команды ───────────────────────────────
+
+    if "[GITHUB_REPOS]" in reply:
+        if clean: await update.message.reply_text(clean)
+        result = github_list_repos()
+        await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[GITHUB_GET:([^:]+):([^\]]+)\]', reply)
+    if m:
+        repo = m.group(1).strip() or GITHUB_REPO
+        path = m.group(2).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"📄 Читаю файл из GitHub...")
+        result = github_get_file(repo, path)
+        for i in range(0, len(result), 4000):
+            await update.message.reply_text(result[i:i+4000])
+        return True
+
+    m = re.search(r'\[GITHUB_PUSH:([^:]+):([^:]+):(.+?)(?::([^\]]+))?\]', reply, re.DOTALL)
+    if m:
+        repo = m.group(1).strip() or GITHUB_REPO
+        path = m.group(2).strip()
+        content = m.group(3).strip()
+        commit_msg = (m.group(4) or "Update via Lilu").strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"📤 Загружаю файл {path} на GitHub...")
+        result = github_push_file(repo, path, content, commit_msg)
+        await update.message.reply_text(result)
         return True
 
     return False
