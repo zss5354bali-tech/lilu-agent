@@ -197,6 +197,43 @@ async def transcribe_voice(file_bytes: bytes) -> str:
         return response.json()["text"]
 
 
+def _parse_json_robust(text: str) -> dict:
+    """Извлекает JSON из ответа Claude с несколькими fallback-стратегиями."""
+    import re
+
+    # 1. Прямой парсинг
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Убрать markdown-обёртку
+    clean = re.sub(r'```(?:json)?\s*', '', text).strip().rstrip('`').strip()
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Найти JSON-объект по фигурным скобкам
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # 4. Вытащить каждое поле регуляркой (последний шанс)
+    fields = ["company", "contact_name", "phone", "email", "website",
+              "products", "country", "city", "voice_comment"]
+    result = {f: "" for f in fields}
+    for field in fields:
+        m = re.search(rf'"{field}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            result[field] = m.group(1)
+    return result
+
+
 async def extract_supplier_data(photos_b64: list[str], voice_text: str) -> dict:
     content = []
 
@@ -214,20 +251,12 @@ async def extract_supplier_data(photos_b64: list[str], voice_text: str) -> dict:
 
     prompt += """
 
-Верни строго JSON (без markdown, без пояснений):
-{
-  "company": "название компании",
-  "contact_name": "имя контактного лица",
-  "phone": "телефон",
-  "email": "email",
-  "website": "сайт",
-  "products": "продукты или услуги кратко",
-  "country": "страна",
-  "city": "город",
-  "voice_comment": "ключевые детали из голосового комментария",
-  "raw_text": "весь распознанный текст с изображений"
-}
-Если поле не найдено — пустая строка."""
+Верни ТОЛЬКО валидный JSON — без markdown, без пояснений, без переносов строк внутри значений.
+Все значения — однострочные строки, спецсимволы экранировать.
+
+{"company":"","contact_name":"","phone":"","email":"","website":"","products":"","country":"","city":"","voice_comment":""}
+
+Заполни поля по данным. Если поле не найдено — пустая строка."""
 
     content.append({"type": "text", "text": prompt})
 
@@ -248,16 +277,7 @@ async def extract_supplier_data(photos_b64: list[str], voice_text: str) -> dict:
         response.raise_for_status()
         text = response.json()["content"][0]["text"].strip()
 
-    # Убрать markdown-обёртку если есть
-    if "```" in text:
-        parts = text.split("```")
-        for part in parts:
-            stripped = part.strip().lstrip("json").strip()
-            if stripped.startswith("{"):
-                text = stripped
-                break
-
-    return json.loads(text)
+    return _parse_json_robust(text)
 
 
 # ─── State ──────────────────────────────────────────────────────────────────
