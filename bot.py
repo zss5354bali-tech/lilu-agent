@@ -982,9 +982,9 @@ async def tg_get_unread(limit: int = 15) -> list:
     return unread
 
 async def _claude_request(system: str, messages: list) -> str:
-    """Базовый вызов Claude API с retry при перегрузке (до 3 попыток)."""
+    """Базовый вызов Claude API с retry при перегрузке и 500 ошибках (до 4 попыток)."""
     last_err = None
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 r = await client.post(
@@ -992,17 +992,24 @@ async def _claude_request(system: str, messages: list) -> str:
                     headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
                     json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": messages}
                 )
+            # HTTP 5xx — серверная ошибка Anthropic, ретрай
+            if r.status_code >= 500:
+                wait = (attempt + 1) * 8
+                logger.warning(f"Anthropic HTTP {r.status_code} (attempt {attempt+1}), retry in {wait}s...")
+                last_err = f"Серверы Anthropic вернули ошибку {r.status_code}, повторяю..."
+                await asyncio.sleep(wait)
+                continue
             data = r.json()
             if "content" in data:
                 return data["content"][0]["text"]
             err_type = data.get("error", {}).get("type", "")
             err_msg = data.get("error", {}).get("message", str(data))
             logger.error(f"Claude error (attempt {attempt+1}): {err_msg}")
-            if err_type == "overloaded_error":
-                wait = (attempt + 1) * 5
-                logger.info(f"Overloaded, retry in {wait}s...")
+            if err_type in ("overloaded_error", "api_error"):
+                wait = (attempt + 1) * 8
+                logger.info(f"Anthropic {err_type}, retry in {wait}s...")
                 await asyncio.sleep(wait)
-                last_err = "Серверы Anthropic перегружены, попробуйте через минуту."
+                last_err = "Серверы Anthropic перегружены, повторяю запрос..."
                 continue
             raise Exception(err_msg)
         except httpx.TimeoutException:
