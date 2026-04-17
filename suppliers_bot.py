@@ -40,7 +40,10 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "")
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 
-DB_PATH = "suppliers.db"
+# /data монтируется как Railway Volume — переживает редеплои
+# Если volume не подключён — падаем обратно на текущую директорию
+_DATA_DIR = "/data" if os.path.isdir("/data") else "."
+DB_PATH = os.path.join(_DATA_DIR, "suppliers.db")
 
 # ─── Database ───────────────────────────────────────────────────────────────
 
