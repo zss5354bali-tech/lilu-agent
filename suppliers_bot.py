@@ -326,28 +326,33 @@ def confirm_kb():
 
 # ─── Formatting ─────────────────────────────────────────────────────────────
 
+def esc(text: str) -> str:
+    """Экранирует HTML-спецсимволы для Telegram HTML parse mode."""
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def fmt_card(data: dict, sid: int = None) -> str:
     lines = []
     if sid:
-        lines.append(f"*#{sid}*")
+        lines.append(f"<b>#{sid}</b>")
     if data.get("company"):
-        lines.append(f"🏢 *{data['company']}*")
+        lines.append(f"🏢 <b>{esc(data['company'])}</b>")
     if data.get("contact_name"):
-        lines.append(f"👤 {data['contact_name']}")
+        lines.append(f"👤 {esc(data['contact_name'])}")
     if data.get("phone"):
-        lines.append(f"📞 {data['phone']}")
+        lines.append(f"📞 {esc(data['phone'])}")
     if data.get("email"):
-        lines.append(f"📧 {data['email']}")
+        lines.append(f"📧 {esc(data['email'])}")
     if data.get("website"):
-        lines.append(f"🌐 {data['website']}")
+        lines.append(f"🌐 {esc(data['website'])}")
     if data.get("products"):
-        lines.append(f"📦 {data['products']}")
+        lines.append(f"📦 {esc(data['products'])}")
     location = ", ".join(filter(None, [data.get("city"), data.get("country")]))
     if location:
-        lines.append(f"📍 {location}")
+        lines.append(f"📍 {esc(location)}")
     if data.get("voice_comment"):
-        lines.append(f"💬 _{data['voice_comment']}_")
-    return "\n".join(lines) if lines else "_(данные не извлечены)_"
+        lines.append(f"💬 <i>{esc(data['voice_comment'])}</i>")
+    return "\n".join(lines) if lines else "<i>(данные не извлечены)</i>"
 
 
 # ─── Handlers ───────────────────────────────────────────────────────────────
@@ -355,12 +360,12 @@ def fmt_card(data: dict, sid: int = None) -> str:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reset_state(update.effective_user.id)
     await update.message.reply_text(
-        "👋 *База поставщиков*\n\n"
-        "Нажмите *Новая запись*, затем отправьте:\n"
+        "👋 <b>База поставщиков</b>\n\n"
+        "Нажмите <b>Новая запись</b>, затем отправьте:\n"
         "• 📷 фото визитки или буклета\n"
         "• 🎤 голосовой комментарий\n\n"
-        "Можно несколько фото и голосовых. Когда всё — нажмите *Готово*.",
-        parse_mode="Markdown",
+        "Можно несколько фото и голосовых. Когда всё — нажмите <b>Готово</b>.",
+        parse_mode="HTML",
         reply_markup=main_kb(),
     )
 
@@ -378,10 +383,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state = get_state(user_id)
         state["mode"] = "collecting"
         await query.message.reply_text(
-            "📝 *Новая запись*\n\n"
+            "📝 <b>Новая запись</b>\n\n"
             "Отправляйте фото и голосовые — в любом порядке и количестве.\n"
-            "Когда закончите — нажмите *Готово*.",
-            parse_mode="Markdown",
+            "Когда закончите — нажмите <b>Готово</b>.",
+            parse_mode="HTML",
             reply_markup=collecting_kb(),
         )
 
@@ -406,7 +411,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             state["mode"] = "confirming"
             await msg.edit_text(
                 f"Проверьте данные:\n\n{fmt_card(extracted)}\n\nСохранить в базу?",
-                parse_mode="Markdown",
+                parse_mode="HTML",
                 reply_markup=confirm_kb(),
             )
         except Exception as e:
@@ -427,7 +432,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reset_state(user_id)
         await query.message.reply_text(
             f"✅ Сохранено!\n\n{fmt_card(extracted, supplier_id)}",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=main_kb(),
         )
 
@@ -442,16 +447,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not suppliers:
             await query.message.reply_text("База пуста.", reply_markup=main_kb())
             return
-        text = f"📋 *Поставщики — {len(suppliers)} шт.:*\n\n"
+        text = f"📋 <b>Поставщики — {len(suppliers)} шт.:</b>\n\n"
         for s in suppliers[:20]:
-            name = s.get("company") or s.get("contact_name") or "—"
-            text += f"• *#{s['id']}* {name}"
+            name = esc(s.get("company") or s.get("contact_name") or "—")
+            text += f"• <b>#{s['id']}</b> {name}"
             if s.get("products"):
-                text += f" — {s['products'][:50]}"
+                text += f" — {esc(s['products'][:50])}"
             text += "\n"
         if len(suppliers) > 20:
-            text += f"\n_...и ещё {len(suppliers) - 20}. Используйте экспорт для полного списка._"
-        await query.message.reply_text(text, parse_mode="Markdown", reply_markup=main_kb())
+            text += f"\n<i>...и ещё {len(suppliers) - 20}. Используйте экспорт для полного списка.</i>"
+        await query.message.reply_text(text, parse_mode="HTML", reply_markup=main_kb())
 
     # ── Поиск ──
     elif data == "search":
@@ -526,7 +531,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if count_p:
             status += f"  📷 Фото: {count_p}"
         await msg.edit_text(
-            f"{status}\n\n_{text}_", parse_mode="Markdown", reply_markup=collecting_kb()
+            f"{status}\n\n<i>{esc(text)}</i>", parse_mode="HTML", reply_markup=collecting_kb()
         )
     except Exception as e:
         await msg.edit_text(f"⚠️ Ошибка распознавания: {e}", reply_markup=collecting_kb())
@@ -545,10 +550,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Ничего не найдено по запросу «{query_text}».", reply_markup=main_kb()
             )
             return
-        text = f"🔍 *Найдено: {len(results)}*\n\n"
+        text = f"🔍 <b>Найдено: {len(results)}</b>\n\n"
         for s in results[:10]:
             text += fmt_card(s, s["id"]) + "\n\n─────\n\n"
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_kb())
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_kb())
     else:
         await update.message.reply_text(
             "Используйте кнопки ниже.", reply_markup=main_kb()
