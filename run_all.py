@@ -12,6 +12,14 @@ import sys
 logger = logging.getLogger(__name__)
 
 
+def run_migrations():
+    try:
+        from migrate_suppliers import run_migration
+        run_migration()
+    except Exception as e:
+        logger.error(f"Migration error: {e}")
+
+
 async def run_lilu():
     """Запуск Lilu бота через async API."""
     import importlib
@@ -57,6 +65,7 @@ async def run_suppliers():
     )
 
     sb.init_db()
+    run_migrations()
 
     app = Application.builder().token(sb.BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", sb.cmd_start))
