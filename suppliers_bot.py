@@ -22,6 +22,9 @@ import datetime
 import io
 import csv
 import base64
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
@@ -472,17 +475,66 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not suppliers:
             await query.message.reply_text("База пуста.", reply_markup=main_kb())
             return
-        output = io.StringIO()
+
         fields = ["id", "company", "contact_name", "phone", "email", "website",
                   "products", "country", "city", "voice_comment", "created_at"]
-        writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
-        writer.writeheader()
-        for s in suppliers:
-            writer.writerow(s)
-        csv_bytes = output.getvalue().encode("utf-8-sig")  # BOM для Excel
-        filename = f"suppliers_{datetime.date.today()}.csv"
+        headers = ["ID", "Компания", "Контакт", "Телефон", "Email", "Сайт",
+                   "Продукты", "Страна", "Город", "Голосовой комментарий", "Дата"]
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Поставщики"
+
+        # Стиль заголовка
+        header_fill = PatternFill("solid", fgColor="2E4057")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        thin = Side(style="thin", color="CCCCCC")
+        cell_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        # Ширина колонок (символов)
+        col_widths = [6, 28, 22, 18, 28, 28, 40, 16, 16, 40, 20]
+
+        for col_idx, (header, width) in enumerate(zip(headers, col_widths), start=1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+            cell.border = cell_border
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+        ws.row_dimensions[1].height = 30
+
+        # Цвета чередующихся строк
+        fill_even = PatternFill("solid", fgColor="F0F4F8")
+        fill_odd  = PatternFill("solid", fgColor="FFFFFF")
+        data_align_wrap = Alignment(vertical="top", wrap_text=True)
+        data_align_nowrap = Alignment(vertical="top", wrap_text=False)
+
+        for row_idx, s in enumerate(suppliers, start=2):
+            fill = fill_even if row_idx % 2 == 0 else fill_odd
+            for col_idx, field in enumerate(fields, start=1):
+                value = s.get(field) or ""
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.fill = fill
+                cell.border = cell_border
+                # Длинные поля — с переносом
+                if field in ("products", "voice_comment"):
+                    cell.alignment = data_align_wrap
+                else:
+                    cell.alignment = data_align_nowrap
+
+        # Заморозка шапки и автофильтр
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(fields))}1"
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        filename = f"suppliers_{datetime.date.today()}.xlsx"
         await query.message.reply_document(
-            document=InputFile(io.BytesIO(csv_bytes), filename=filename),
+            document=InputFile(buf, filename=filename),
             caption=f"📥 База поставщиков — {len(suppliers)} записей",
             reply_markup=main_kb(),
         )
