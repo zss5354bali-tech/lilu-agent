@@ -1304,9 +1304,8 @@ async def process_commands(reply, update, uid, depth=0):
 
     return False
 
-async def morning_digest(context):
-    """Утренний дайджест: погода, курсы, письма, цитата."""
-    uid = OWNER_ID
+async def build_digest() -> str:
+    """Собрать текст утреннего дайджеста."""
     today = datetime.date.today()
     quote = MORNING_QUOTES[today.timetuple().tm_yday % len(MORNING_QUOTES)]
     days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -1322,42 +1321,78 @@ async def morning_digest(context):
     except Exception:
         pass
 
-    # Курсы ЦБ (USD, EUR)
+    # Курсы ЦБ (USD, EUR, IDR если есть)
     rates = ""
     try:
         with httpx.Client(timeout=8) as client:
             r = client.get("https://www.cbr.ru/scripts/XML_daily.asp")
         root = ET.fromstring(r.content)
-        usd = eur = ""
+        usd = eur = idr = ""
         for v in root.findall("Valute"):
             code = v.find("CharCode").text
             val = float(v.find("Value").text.replace(",", "."))
             nom = int(v.find("Nominal").text)
             rate = val / nom
-            if code == "USD": usd = f"💵 {rate:.2f}₽"
-            elif code == "EUR": eur = f"💶 {rate:.2f}₽"
-        rates = "  ".join(filter(None, [usd, eur]))
+            if code == "USD": usd = f"💵 USD {rate:.2f}₽"
+            elif code == "EUR": eur = f"💶 EUR {rate:.2f}₽"
+            elif code == "IDR":
+                rate_k = val / nom * 1000
+                idr = f"🇮🇩 IDR {rate_k:.4f}₽/1000"
+        rates = "  ".join(filter(None, [usd, eur, idr]))
     except Exception:
         pass
+
+    # Топ новости (Tavily)
+    news_lines = []
+    if TAVILY_API_KEY:
+        news_queries = [
+            ("🌍 Мир", "world news today top headlines"),
+            ("🇮🇩 Бали", "Bali Indonesia news today"),
+            ("📈 Бизнес", "business investment news today"),
+        ]
+        for emoji_label, q in news_queries:
+            try:
+                with httpx.Client(timeout=10) as client:
+                    r = client.post(
+                        "https://api.tavily.com/search",
+                        json={"api_key": TAVILY_API_KEY, "query": q,
+                              "max_results": 3, "search_depth": "basic",
+                              "days": 1}
+                    )
+                items = r.json().get("results", [])[:3]
+                if items:
+                    news_lines.append(f"\n{emoji_label}:")
+                    for it in items:
+                        title = re.sub(r'\s+', ' ', it.get('title', '')).strip()[:120]
+                        news_lines.append(f"• {title}")
+            except Exception:
+                pass
 
     # Новые письма
     email_part = ""
     try:
-        emails_text = get_emails(uid, limit=3)
+        emails_text = get_emails(OWNER_ID, limit=3)
         if "📭" not in emails_text and "⚠️" not in emails_text:
-            email_part = emails_text[:600]
+            email_part = emails_text[:500]
     except Exception:
         pass
 
     lines = [f"☀️ Доброе утро, Сергей Сергеевич!\n📅 {day_str}"]
     if weather: lines.append(f"🌤 {weather}")
     if rates: lines.append(rates)
+    if news_lines: lines.append("".join(news_lines))
     lines.append(f"\n💬 «{quote}»")
-    if email_part: lines.append(f"\n{email_part}")
+    if email_part: lines.append(f"\n📬 Почта:\n{email_part}")
     else: lines.append("\n📭 Новых писем нет.")
+    return "\n".join(lines)
 
+
+async def morning_digest(context):
+    """Утренний дайджест — запускается по расписанию."""
     try:
-        await context.bot.send_message(chat_id=uid, text="\n".join(lines))
+        text = await build_digest()
+        await context.bot.send_message(chat_id=OWNER_ID, text=text)
+        logger.info("Утренний дайджест отправлен.")
     except Exception as e:
         logger.error(f"Morning digest error: {e}")
 
@@ -1427,6 +1462,17 @@ async def mode_cmd(update, ctx):
     ]])
     cur = "голосовой" if voice_mode.get(uid) else "текстовый"
     await update.message.reply_text(f"Текущий режим: {cur}.", reply_markup=kb)
+
+async def digest_cmd(update, ctx):
+    """Ручной запуск утреннего дайджеста — /digest"""
+    if not is_owner(update.effective_user.id):
+        return
+    await update.message.reply_text("⏳ Собираю дайджест...")
+    try:
+        text = await build_digest()
+        await update.message.reply_text(text)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка дайджеста: {e}")
 
 async def clear_cmd(update, ctx):
     histories.pop(update.effective_user.id, None)
@@ -1534,6 +1580,7 @@ async def main_async():
     app.add_handler(CommandHandler("mode", mode_cmd))
     app.add_handler(CommandHandler("mail", mail_cmd))
     app.add_handler(CommandHandler("memory", memory_cmd))
+    app.add_handler(CommandHandler("digest", digest_cmd))
     app.add_handler(CallbackQueryHandler(set_mode, pattern="^mode_"))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
