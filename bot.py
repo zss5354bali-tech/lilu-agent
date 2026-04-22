@@ -92,6 +92,9 @@ SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент 
 
 КОМАНДЫ (вставляй в ответ — код выполнит автоматически):
 
+Дайджест:
+[DIGEST] — показать утренний дайджест (погода, курсы, новости, почта)
+
 Поиск/страницы:
 [WEB_SEARCH:запрос] — поиск в интернете
 [FETCH_URL:https://...] — открыть страницу (погода: wttr.in/Bali, курсы: cbr.ru/currency_base/daily/)
@@ -125,6 +128,7 @@ Railway/GitHub:
 [MEMORY_SAVE:ключ:значение] — запомнить навсегда
 
 ПРАВИЛА:
+- "дайджест" / "покажи дайджест" / "утренний дайджест" → [DIGEST]. НЕ используй TG_UNREAD для дайджеста.
 - Поиск контакта → EMAIL_SEARCH, потом EMAIL_SEND. НЕ проси адрес если можешь найти.
 - Ответ на письмо → сначала EMAIL_DRAFT, не отправляй сразу.
 - НЕ вызывай TG_SEND без явного запроса отправить.
@@ -1000,7 +1004,14 @@ async def process_commands(reply, update, uid, depth=0):
         except Exception as e:
             logger.error(f"Memory: {e}")
 
-    clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[EMAIL_CHECK\]', '', reply).strip()
+    clean = re.sub(r'\[[A-Z_][A-Z_]*(?::[^\]]*)??\]', '', reply).strip()
+
+    if "[DIGEST]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("⏳ Собираю дайджест...")
+        text = await build_digest()
+        await update.message.reply_text(text)
+        return True
 
     m = re.search(r'\[WEB_SEARCH:([^\]]+)\]', reply)
     if m:
