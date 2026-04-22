@@ -55,6 +55,29 @@ async def run_lilu():
     return app
 
 
+async def run_scanner():
+    """Запуск Scanner бота (без БД) через async API."""
+    import scanner_bot as sc
+
+    from telegram.ext import (
+        Application, CommandHandler, MessageHandler,
+        CallbackQueryHandler, filters
+    )
+
+    app = Application.builder().token(sc.BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", sc.cmd_start))
+    app.add_handler(CallbackQueryHandler(sc.on_callback))
+    app.add_handler(MessageHandler(filters.PHOTO, sc.on_photo))
+    app.add_handler(MessageHandler(filters.VOICE, sc.on_voice))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, sc.on_text))
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    logger.info("Scanner bot started")
+    return app
+
+
 async def run_suppliers():
     """Запуск Suppliers бота через async API."""
     import suppliers_bot as sb
@@ -89,6 +112,7 @@ async def main():
     # Запускаем Lilu если токен задан
     lilu_token = os.getenv("BOT_TOKEN")
     suppliers_token = os.getenv("SUPPLIERS_BOT_TOKEN")
+    scanner_token = os.getenv("SCANNER_BOT_TOKEN", "8692863987:AAFBRaEG9rwNcynoZsAZrtPN1ksKxhQD2eg")
 
     if lilu_token:
         try:
@@ -103,6 +127,13 @@ async def main():
             apps.append(app)
         except Exception as e:
             logger.error(f"Suppliers bot failed to start: {e}")
+
+    if scanner_token:
+        try:
+            app = await run_scanner()
+            apps.append(app)
+        except Exception as e:
+            logger.error(f"Scanner bot failed to start: {e}")
 
     if not apps:
         logger.error("No bots started — check BOT_TOKEN and SUPPLIERS_BOT_TOKEN")
