@@ -1357,16 +1357,19 @@ async def build_digest() -> str:
                         "https://api.tavily.com/search",
                         json={"api_key": TAVILY_API_KEY, "query": q,
                               "max_results": 3, "search_depth": "basic",
-                              "days": 1}
+                              "topic": "news", "days": 3}
                     )
-                items = r.json().get("results", [])[:3]
+                data = r.json()
+                items = data.get("results", [])[:3]
                 if items:
                     news_lines.append(f"\n{emoji_label}:")
                     for it in items:
                         title = re.sub(r'\s+', ' ', it.get('title', '')).strip()[:120]
                         news_lines.append(f"• {title}")
-            except Exception:
-                pass
+                else:
+                    logger.warning(f"Tavily digest '{q}': no results. Response: {str(data)[:200]}")
+            except Exception as e:
+                logger.warning(f"Tavily digest '{q}' error: {e}")
 
     # Новые письма
     email_part = ""
@@ -1380,7 +1383,7 @@ async def build_digest() -> str:
     lines = [f"☀️ Доброе утро, Сергей Сергеевич!\n📅 {day_str}"]
     if weather: lines.append(f"🌤 {weather}")
     if rates: lines.append(rates)
-    if news_lines: lines.append("".join(news_lines))
+    if news_lines: lines.append("\n".join(news_lines))
     lines.append(f"\n💬 «{quote}»")
     if email_part: lines.append(f"\n📬 Почта:\n{email_part}")
     else: lines.append("\n📭 Новых писем нет.")
