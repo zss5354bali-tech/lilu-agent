@@ -36,6 +36,12 @@ TG_API_ID = int(os.getenv("TG_API_ID", "35529109"))
 TG_API_HASH = os.getenv("TG_API_HASH", "8c2fc8ca860c843db14a42a2a1d12dfd")
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+RAILWAY_API_TOKEN = os.getenv("RAILWAY_API_TOKEN", "")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+RAILWAY_PROJECT_ID = os.getenv("RAILWAY_PROJECT_ID", "2bbae21a-1833-44d6-ab3a-3e8dd1382074")
+RAILWAY_SERVICE_ID = os.getenv("RAILWAY_SERVICE_ID", "906cfc5a-e237-4cde-9136-bcd518e7a45b")
+RAILWAY_ENVIRONMENT_ID = os.getenv("RAILWAY_ENVIRONMENT_ID", "")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "zss5354bali-tech/lilu-agent")
 
 IMAP_SERVER = "imap.mail.ru"
 
@@ -74,107 +80,64 @@ MORNING_QUOTES = [
     "Слушай клиента вдвое больше, чем говоришь — два уха, один рот.",
 ]
 
-SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент Сергея Сергеевича Жмакова.
+SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент Сергея Сергеевича Жмакова (Бали, инвестор, AkuMau).
 
-СТИЛЬ:
-- Обращайся ТОЛЬКО "Сергей Сергеевич"
-- Чёткий тон, без лишних эмоций
-- В голосовых ответах — максимум 2-3 предложения
-- Ты помнишь весь контекст разговора — используй его!
+КТО ТЫ:
+Ты развёрнута на Railway, работаешь 24/7 как Telegram-бот. Ты сама — и есть этот бот.
+Твой код: github.com/zss5354bali-tech/lilu-agent, хостинг: Railway, почта: alfa-sz@mail.ru.
+НЕ говори "я не могу создавать ботов/деплоить/работать с GitHub" — ты именно это и делаешь.
+НЕ спрашивай токены и конфиг — всё уже настроено и работает.
 
-ВАЖНО ПРО КОНТЕКСТ:
-- Если в предыдущих сообщениях был найден email адрес — используй его
-- Если уже обсуждался какой-то контакт — помни об этом
-- Не теряй информацию из предыдущих сообщений
+СТИЛЬ: обращайся "Сергей Сергеевич", коротко и по делу, без воды.
 
-ХАРАКТЕР И ЗАДАЧИ:
-- Ты ПЕРСОНАЛЬНЫЙ ассистент — помогаешь со ВСЕМИ задачами: работа, личная жизнь, общение, знакомства, развлечения — всё что попросит Сергей Сергеевич
-- НЕ отказывай в задачах под предлогом "это не деловая задача" — тебе можно всё
-- Если просят найти людей в группах, написать кому-то, проанализировать переписку — делай это без лишних оговорок
+КОМАНДЫ (вставляй в ответ — код выполнит автоматически):
 
-ВОЗМОЖНОСТИ:
-- Отвечаешь на любые вопросы, ищешь информацию в интернете
-- Пишешь любые тексты и письма
-- Полностью управляешь почтой alfa-sz@mail.ru
-- Читаешь и ищешь по всем Telegram чатам, отправляешь сообщения от личного аккаунта
-- Запоминаешь важную информацию навсегда
-- Анализируешь фото и документы
+Дайджест:
+[DIGEST] — показать утренний дайджест (погода, курсы, новости, почта)
 
-ВЕБ-ПОИСК И СТРАНИЦЫ:
-[WEB_SEARCH:поисковый запрос] — найти информацию в интернете
-[FETCH_URL:https://сайт.com] — открыть конкретную страницу и прочитать её содержимое
-Используй для: контакты компаний, актуальные данные, адреса, телефоны, email, новости, цены, погода, курсы валют.
-Всегда используй [WEB_SEARCH] или [FETCH_URL] — НЕ говори "у меня нет доступа к интернету"!
-Погода: [FETCH_URL:https://wttr.in/Bali?lang=ru]
-Курсы ЦБ: [FETCH_URL:https://www.cbr.ru/currency_base/daily/]
+Поиск/страницы:
+[WEB_SEARCH:запрос] — поиск в интернете
+[FETCH_URL:https://...] — открыть страницу (погода: wttr.in/Bali, курсы: cbr.ru/currency_base/daily/)
 
-ПОЧТОВЫЕ КОМАНДЫ (вставляй команду в ответ когда нужно):
-[EMAIL_CHECK] — проверить новые письма
-[EMAIL_SEARCH:запрос] — найти письма и адрес отправителя по имени или домену
-[EMAIL_DELETE_FROM:отправитель] — удалить ВСЕ письма от отправителя
-[EMAIL_SEND:адрес@mail.com:Тема:Текст письма] — отправить письмо
-[EMAIL_DELETE:номер] — удалить письмо по номеру из списка
-[MEMORY_SAVE:ключ:значение] — сохранить важную информацию
+Почта (alfa-sz@mail.ru):
+[EMAIL_CHECK] — новые письма
+[EMAIL_SEARCH:запрос] — найти письма/адрес
+[EMAIL_SEND:адрес:Тема:Текст] — отправить
+[EMAIL_DELETE_FROM:отправитель] — удалить все от отправителя
+[EMAIL_DELETE:номер] — удалить по номеру
+[EMAIL_DRAFT:N:текст] — черновик ответа на письмо N (ждёт "да")
 
-TELEGRAM КОМАНДЫ (через личный аккаунт):
-[TG_UNREAD] — прочитать все непрочитанные сообщения и предложить ответы
-[TG_SEND_TO:Имя или @username:Текст] — написать человеку (код сам найдёт контакт по имени)
-[TG_REPLY_INBOX:имя/описание отправителя:Текст] — ответить на входящее сообщение (код сам найдёт последнее сообщение от этого человека)
-[TG_SEND_GROUP_MEMBER:группа:Имя участника:Текст] — написать участнику группы (если нет в диалогах)
-[TG_READ_GROUP:название группы] — прочитать сообщения группы для анализа
-[TG_SEARCH:конкретное слово или фраза] — найти по ключевому слову во всех чатах (ОБЯЗАТЕЛЬНО укажи реальный поисковый запрос, не используй слово "запрос" буквально)
-[TG_SEND:@username_или_числовой_id:Текст] — отправить если уже известен точный id
+Telegram (личный аккаунт +79180408607):
+[TG_UNREAD] — непрочитанные + предложить ответы
+[TG_SEND_TO:Имя:Текст] — написать по имени
+[TG_REPLY_INBOX:имя:Текст] — ответить на входящее
+[TG_READ_GROUP:группа] — прочитать группу
+[TG_SEARCH:слово] — поиск по чатам
+[TG_SEND_GROUP_MEMBER:группа:Имя:Текст] — написать участнику группы
+
+Railway/GitHub:
+[RAILWAY_STATUS] — статус деплоев
+[RAILWAY_DEPLOY] — перезапустить
+[RAILWAY_SET_VAR:KEY:VALUE] — установить переменную
+[RAILWAY_GET_VARS] — все переменные
+[GITHUB_REPOS] — список репозиториев
+[GITHUB_GET:repo:путь] — читать файл
+[GITHUB_PUSH:repo:путь:содержимое:commit] — загрузить файл
+
+Память:
+[MEMORY_SAVE:ключ:значение] — запомнить навсегда
 
 ПРАВИЛА:
-- "Просмотри непрочитанные" / "что пишут" → [TG_UNREAD]
-- Написать кому-то по имени → [TG_SEND_TO:Имя:Текст]
-- Ответить на входящее → [TG_REPLY_INBOX:имя отправителя:Текст]
-- Написать участнику группы → [TG_SEND_GROUP_MEMBER:группа:Имя:Текст]
-- Несколько получателей → покажи все сообщения, спроси "Отправить?", жди "да"
+- НЕ пиши вступления перед командами ("сейчас найду", "поищу", "открою страницу"). Используй команду сразу, без объяснений.
+- После поиска: только список результатов — название, телефон/сайт. Без вступлений, без "итак", без заключений. Максимум 5 пунктов. ОДИН поиск — достаточно.
+- "дайджест" / "покажи дайджест" / "утренний дайджест" → [DIGEST]. НЕ используй TG_UNREAD для дайджеста.
+- Поиск контакта → EMAIL_SEARCH, потом EMAIL_SEND. НЕ проси адрес если можешь найти.
+- Ответ на письмо → сначала EMAIL_DRAFT, не отправляй сразу.
+- НЕ вызывай TG_SEND без явного запроса отправить.
+- Если просят написать бота — пиши код, используй ТОЛЬКО токен который дали.
+- "статус бота" → RAILWAY_STATUS, "перезапусти" → RAILWAY_DEPLOY.
 
-СТИЛЬ ОТВЕТОВ СЕРГЕЯ СЕРГЕЕВИЧА В TELEGRAM:
-- Короткие, конкретные сообщения — 1-3 предложения максимум
-- По делу, без воды и вступлений
-- Деловой но человеческий тон
-- Русский язык, иногда английские термины
-- Никаких смайлов и лишних слов вроде "конечно", "разумеется", "безусловно"
-
-РАБОТА С ПИСЬМАМИ (черновики):
-[EMAIL_DRAFT:N:текст] — предложить черновик ответа на письмо N (пользователь скажет "да" → отправится)
-Когда просят ответить на письмо — ВСЕГДА сначала предлагай черновик через [EMAIL_DRAFT], не отправляй сразу!
-
-ЛОГИКА ОТПРАВКИ ПИСЬМА:
-Когда просят отправить письмо конкретному человеку (например "Кравченко"):
-1. СНАЧАЛА выполни [EMAIL_SEARCH:Кравченко] чтобы найти его адрес в почте
-2. Из результатов поиска извлеки email адрес отправителя
-3. ЗАТЕМ отправь письмо на найденный адрес через [EMAIL_SEND:адрес:тема:текст]
-НЕ ПРОСИ адрес у пользователя если можешь найти его в почте сам!
-Если в памяти уже есть адрес этого человека — используй его сразу.
-
-Когда просят прочитать или проанализировать сообщения в конкретной группе:
-— Используй [TG_READ_GROUP:название группы]
-— После получения сообщений — проанализируй и ответь по существу
-
-Когда просят найти переписку или упоминания по ключевому слову — используй [TG_SEARCH:слово]
-
-ВАЖНО: НЕ используй TG_SEND самостоятельно без явного запроса!
-Если Сергей Сергеевич спрашивает о возможностях — просто объясни их текстом, НЕ вызывай команды.
-
-КОД И БОТЫ:
-- Ты пишешь код, скрипты, Telegram-ботов — всё что нужно Сергею Сергеевичу
-- Если дают токен бота — используй ТОЛЬКО этот токен, никакой другой
-- Если дают API ключ или credentials — используй именно их, не подставляй другие
-- Всегда явно подтверждай какой токен/ключ используешь в коде
-
-ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
-{memory}
-
-СПРАВКА:
-- Гражданин России, живёт на Бали (Индонезия), инвесторский КИТАС
-- Платформа AkuMau — маркетплейс товаров и услуг на Бали
-- Почта: alfa-sz@mail.ru (основная)
-- Gmail: zss5354bali@gmail.com (для отправки)
-- Telegram: +79180408607"""
+ПАМЯТЬ: {memory}"""
 
 class HTMLStripper(HTMLParser):
     def __init__(self):
@@ -242,9 +205,12 @@ def get_body(msg):
         except: pass
     return re.sub(r'\s+', ' ', body).strip()[:400]
 
-def web_search(query: str, max_results: int = 8) -> str:
+def web_search(query: str, max_results: int = 5) -> str:
     """Поиск через Tavily API (основной) с резервом на DuckDuckGo."""
-    # Основной: Tavily — стабильный платный API, не блокирует
+    def trim(text: str, n: int = 300) -> str:
+        text = re.sub(r'\s+', ' ', text or '').strip()
+        return text[:n] + '...' if len(text) > n else text
+
     if TAVILY_API_KEY:
         try:
             with httpx.Client(timeout=15) as client:
@@ -256,23 +222,22 @@ def web_search(query: str, max_results: int = 8) -> str:
             data = r.json()
             results = data.get("results", [])
             if results:
-                out = f"🌐 Результаты поиска «{query}»:\n\n"
-                for item in results:
-                    out += f"**{item.get('title','')}**\n{item.get('content','')}\n{item.get('url','')}\n\n"
+                out = f"Поиск: «{query}»\n\n"
+                for item in results[:5]:
+                    out += f"{item.get('title','')}\n{trim(item.get('content',''))}\n{item.get('url','')}\n\n"
                 return out.strip()
         except Exception as e:
             logger.warning(f"Tavily error: {e}")
 
-    # Резерв: DuckDuckGo (может блокироваться на Railway)
     for backend in ["lite", "html", "api"]:
         try:
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=max_results, backend=backend))
             if not results:
                 continue
-            out = f"🌐 Результаты поиска «{query}»:\n\n"
-            for r in results:
-                out += f"**{r.get('title','')}**\n{r.get('body','')}\n{r.get('href','')}\n\n"
+            out = f"Поиск: «{query}»\n\n"
+            for r in results[:5]:
+                out += f"{r.get('title','')}\n{trim(r.get('body',''))}\n{r.get('href','')}\n\n"
             return out.strip()
         except Exception:
             continue
@@ -455,6 +420,252 @@ def send_email(to, subject, body):
         return f"⚠️ Ошибка Brevo: {r.json().get('message', r.text)}"
     except Exception as e:
         return f"⚠️ Ошибка отправки: {e}"
+
+# ═══════════════════════════════════════════════════
+#  RAILWAY API  (GraphQL v2)
+# ═══════════════════════════════════════════════════
+
+def railway_gql(query: str, variables: dict = None) -> dict:
+    """Выполнить GraphQL-запрос к Railway API."""
+    if not RAILWAY_API_TOKEN:
+        return {"error": "RAILWAY_API_TOKEN не задан"}
+    try:
+        with httpx.Client(timeout=20) as client:
+            r = client.post(
+                "https://backboard.railway.com/graphql/v2",
+                headers={"Authorization": f"Bearer {RAILWAY_API_TOKEN}",
+                         "Content-Type": "application/json"},
+                json={"query": query, "variables": variables or {}}
+            )
+        data = r.json()
+        if "errors" in data:
+            return {"error": data["errors"][0].get("message", str(data["errors"]))}
+        return data.get("data", {})
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def railway_status() -> str:
+    """Получить статус деплоя сервиса."""
+    q = """
+    query($serviceId: String!) {
+      deployments(input: { serviceId: $serviceId }, first: 3) {
+        edges { node { id status createdAt } }
+      }
+    }
+    """
+    data = railway_gql(q, {"serviceId": RAILWAY_SERVICE_ID})
+    if "error" in data:
+        return f"⚠️ Railway API: {data['error']}"
+    edges = data.get("deployments", {}).get("edges", [])
+    if not edges:
+        return "ℹ️ Деплоев не найдено."
+    lines = ["🚂 Последние деплои Railway:"]
+    for e in edges:
+        n = e["node"]
+        status = n.get("status", "?")
+        emoji = {"SUCCESS": "✅", "FAILED": "❌", "BUILDING": "🔨", "DEPLOYING": "🚀",
+                 "CRASHED": "💥", "REMOVED": "🗑️"}.get(status, "⏳")
+        created = n.get("createdAt", "")[:16].replace("T", " ")
+        lines.append(f"{emoji} {status} — {created}")
+    return "\n".join(lines)
+
+
+def railway_redeploy() -> str:
+    """Перезапустить последний деплой сервиса."""
+    # Сначала получим последний deployment id
+    q_get = """
+    query($serviceId: String!) {
+      deployments(input: { serviceId: $serviceId }, first: 1) {
+        edges { node { id } }
+      }
+    }
+    """
+    data = railway_gql(q_get, {"serviceId": RAILWAY_SERVICE_ID})
+    if "error" in data:
+        return f"⚠️ Railway: {data['error']}"
+    edges = data.get("deployments", {}).get("edges", [])
+    if not edges:
+        return "⚠️ Нет деплоев для перезапуска."
+    dep_id = edges[0]["node"]["id"]
+    q_redeploy = "mutation($id: String!) { deploymentRedeploy(id: $id) { id status } }"
+    result = railway_gql(q_redeploy, {"id": dep_id})
+    if "error" in result:
+        return f"⚠️ Ошибка redeploy: {result['error']}"
+    node = result.get("deploymentRedeploy", {})
+    return f"🚀 Redeploy запущен. ID: {node.get('id','?')}, статус: {node.get('status','?')}"
+
+
+def railway_set_var(key: str, value: str) -> str:
+    """Установить переменную окружения в Railway."""
+    # Нужен environmentId — если не задан, получим его
+    env_id = RAILWAY_ENVIRONMENT_ID
+    if not env_id:
+        q_env = """
+        query($projectId: String!) {
+          project(id: $projectId) {
+            environments { edges { node { id name } } }
+          }
+        }
+        """
+        data = railway_gql(q_env, {"projectId": RAILWAY_PROJECT_ID})
+        envs = data.get("project", {}).get("environments", {}).get("edges", [])
+        for e in envs:
+            if e["node"]["name"] == "production":
+                env_id = e["node"]["id"]
+                break
+        if not env_id and envs:
+            env_id = envs[0]["node"]["id"]
+    if not env_id:
+        return "⚠️ Не удалось найти environment."
+
+    q = """
+    mutation($input: VariableCollectionUpsertInput!) {
+      variableCollectionUpsert(input: $input)
+    }
+    """
+    variables = {
+        "input": {
+            "projectId": RAILWAY_PROJECT_ID,
+            "serviceId": RAILWAY_SERVICE_ID,
+            "environmentId": env_id,
+            "variables": {key: value}
+        }
+    }
+    result = railway_gql(q, variables)
+    if "error" in result:
+        return f"⚠️ Ошибка Railway setVar: {result['error']}"
+    return f"✅ Переменная {key} обновлена в Railway."
+
+
+def railway_get_vars() -> str:
+    """Получить список переменных из Railway."""
+    env_id = RAILWAY_ENVIRONMENT_ID
+    if not env_id:
+        q_env = """
+        query($projectId: String!) {
+          project(id: $projectId) { environments { edges { node { id name } } } }
+        }
+        """
+        data = railway_gql(q_env, {"projectId": RAILWAY_PROJECT_ID})
+        envs = data.get("project", {}).get("environments", {}).get("edges", [])
+        for e in envs:
+            if e["node"]["name"] == "production":
+                env_id = e["node"]["id"]
+                break
+        if not env_id and envs:
+            env_id = envs[0]["node"]["id"]
+    if not env_id:
+        return "⚠️ Не удалось найти environment."
+
+    q = """
+    query($projectId: String!, $serviceId: String!, $environmentId: String!) {
+      variables(projectId: $projectId, serviceId: $serviceId, environmentId: $environmentId)
+    }
+    """
+    data = railway_gql(q, {
+        "projectId": RAILWAY_PROJECT_ID,
+        "serviceId": RAILWAY_SERVICE_ID,
+        "environmentId": env_id
+    })
+    if "error" in data:
+        return f"⚠️ Railway getVars: {data['error']}"
+    vars_dict = data.get("variables", {})
+    if not vars_dict:
+        return "ℹ️ Переменные не найдены."
+    lines = ["🔧 Переменные Railway:"]
+    for k in sorted(vars_dict.keys()):
+        v = vars_dict[k]
+        # Скрываем чувствительные значения
+        if any(x in k.upper() for x in ["TOKEN", "KEY", "SECRET", "PASSWORD", "PASS"]):
+            v = v[:4] + "***" if len(v) > 4 else "***"
+        lines.append(f"  {k}={v}")
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════
+#  GITHUB API
+# ═══════════════════════════════════════════════════
+
+def github_push_file(repo: str, path: str, content: str, message: str = "Update via Lilu") -> str:
+    """Создать или обновить файл в GitHub репозитории."""
+    if not GITHUB_TOKEN:
+        return "⚠️ GITHUB_TOKEN не задан."
+    if not repo:
+        return "⚠️ GITHUB_REPO не задан. Укажи репозиторий в формате user/repo."
+    try:
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"
+        }
+        url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        # Получаем текущий sha файла (если существует)
+        with httpx.Client(timeout=15) as client:
+            existing = client.get(url, headers=headers)
+        sha = existing.json().get("sha") if existing.status_code == 200 else None
+
+        # Кодируем содержимое в base64
+        encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        payload = {"message": message, "content": encoded}
+        if sha:
+            payload["sha"] = sha
+
+        with httpx.Client(timeout=20) as client:
+            r = client.put(url, headers=headers, json=payload)
+        if r.status_code in (200, 201):
+            action = "обновлён" if sha else "создан"
+            return f"✅ Файл {path} {action} в {repo}"
+        return f"⚠️ GitHub ошибка {r.status_code}: {r.json().get('message', r.text[:200])}"
+    except Exception as e:
+        return f"⚠️ GitHub push error: {e}"
+
+
+def github_get_file(repo: str, path: str) -> str:
+    """Прочитать файл из GitHub репозитория."""
+    if not GITHUB_TOKEN:
+        return "⚠️ GITHUB_TOKEN не задан."
+    if not repo:
+        return "⚠️ GITHUB_REPO не задан."
+    try:
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+        url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        with httpx.Client(timeout=15) as client:
+            r = client.get(url, headers=headers)
+        if r.status_code == 200:
+            data = r.json()
+            content = base64.b64decode(data["content"]).decode("utf-8")
+            return f"📄 {path} из {repo}:\n\n{content[:3000]}"
+        return f"⚠️ GitHub {r.status_code}: {r.json().get('message', r.text[:100])}"
+    except Exception as e:
+        return f"⚠️ GitHub get error: {e}"
+
+
+def github_list_repos() -> str:
+    """Получить список репозиториев пользователя."""
+    if not GITHUB_TOKEN:
+        return "⚠️ GITHUB_TOKEN не задан."
+    try:
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+        with httpx.Client(timeout=15) as client:
+            r = client.get("https://api.github.com/user/repos?per_page=20&sort=updated", headers=headers)
+        if r.status_code == 200:
+            repos = r.json()
+            lines = ["📦 GitHub репозитории:"]
+            for repo in repos:
+                private = "🔒" if repo.get("private") else "🌐"
+                lines.append(f"  {private} {repo['full_name']}")
+            return "\n".join(lines)
+        return f"⚠️ GitHub {r.status_code}: {r.json().get('message', r.text[:100])}"
+    except Exception as e:
+        return f"⚠️ GitHub repos error: {e}"
+
 
 async def tg_send(recipient: str, text: str) -> str:
     """Отправить сообщение через личный аккаунт Telegram (точный @username или числовой id)."""
@@ -714,9 +925,9 @@ async def tg_get_unread(limit: int = 15) -> list:
     return unread
 
 async def _claude_request(system: str, messages: list) -> str:
-    """Базовый вызов Claude API с retry при перегрузке (до 3 попыток)."""
+    """Базовый вызов Claude API с retry при перегрузке и 500 ошибках (до 4 попыток)."""
     last_err = None
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 r = await client.post(
@@ -724,17 +935,24 @@ async def _claude_request(system: str, messages: list) -> str:
                     headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
                     json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "system": system, "messages": messages}
                 )
+            # HTTP 5xx — серверная ошибка Anthropic, ретрай
+            if r.status_code >= 500:
+                wait = (attempt + 1) * 8
+                logger.warning(f"Anthropic HTTP {r.status_code} (attempt {attempt+1}), retry in {wait}s...")
+                last_err = f"Серверы Anthropic вернули ошибку {r.status_code}, повторяю..."
+                await asyncio.sleep(wait)
+                continue
             data = r.json()
             if "content" in data:
                 return data["content"][0]["text"]
             err_type = data.get("error", {}).get("type", "")
             err_msg = data.get("error", {}).get("message", str(data))
             logger.error(f"Claude error (attempt {attempt+1}): {err_msg}")
-            if err_type == "overloaded_error":
-                wait = (attempt + 1) * 5
-                logger.info(f"Overloaded, retry in {wait}s...")
+            if err_type in ("overloaded_error", "api_error"):
+                wait = (attempt + 1) * 8
+                logger.info(f"Anthropic {err_type}, retry in {wait}s...")
                 await asyncio.sleep(wait)
-                last_err = "Серверы Anthropic перегружены, попробуйте через минуту."
+                last_err = "Серверы Anthropic перегружены, повторяю запрос..."
                 continue
             raise Exception(err_msg)
         except httpx.TimeoutException:
@@ -756,8 +974,8 @@ async def ask_claude(uid, message, image_data=None):
     else:
         content = message
     histories[uid].append({"role": "user", "content": content})
-    if len(histories[uid]) > 40:
-        histories[uid] = histories[uid][-40:]
+    if len(histories[uid]) > 20:
+        histories[uid] = histories[uid][-20:]
     reply = await _claude_request(system, histories[uid])
     histories[uid].append({"role": "assistant", "content": reply})
     return reply
@@ -788,26 +1006,37 @@ async def process_commands(reply, update, uid, depth=0):
         except Exception as e:
             logger.error(f"Memory: {e}")
 
-    clean = re.sub(r'\[[A-Z_]+:[^\]]*\]|\[EMAIL_CHECK\]', '', reply).strip()
+    clean = re.sub(r'\[[A-Z_][A-Z_]*(?::[^\]]*)??\]', '', reply).strip()
+
+    if "[DIGEST]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("⏳ Собираю дайджест...")
+        text = await build_digest()
+        await update.message.reply_text(text)
+        return True
 
     m = re.search(r'\[WEB_SEARCH:([^\]]+)\]', reply)
     if m:
         query = m.group(1).strip()
-        if clean: await update.message.reply_text(clean)
-        await update.message.reply_text(f"🌐 Ищу в интернете: {query}...")
+        # Не отправляем pre-announcement (clean) — всегда лишний текст
+        await update.message.reply_text(f"🔍 {query[:80]}...")
         result = web_search(query)
-        await update.message.reply_text(result[:4000])
         if depth < MAX_DEPTH:
             histories[uid].append({
                 "role": "user",
-                "content": f"[РЕЗУЛЬТАТ ВЕБ-ПОИСКА]\n{result}\n\nОтветь по существу."
+                "content": (
+                    f"[РЕЗУЛЬТАТ ПОИСКА]\n{result[:2000]}\n\n"
+                    "Ответь ТОЛЬКО списком — максимум 5 пунктов:\n"
+                    "Название — телефон/email/сайт\n"
+                    "Никаких вступлений, никаких заключений, никакого нового поиска."
+                )
             })
             follow_up = await claude_call(uid)
-            if re.search(r'\[WEB_SEARCH:|EMAIL_SEND:|TG_SEND:', follow_up):
-                await process_commands(follow_up, update, uid, depth=depth + 1)
-            else:
-                follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
-                if follow_clean: await update.message.reply_text(follow_clean)
+            # Запрещаем рекурсивный второй поиск — всегда показываем ответ
+            follow_clean = re.sub(r'\[[A-Z_][A-Z_]*(?::[^\]]*)??\]', '', follow_up).strip()
+            if follow_clean: await update.message.reply_text(follow_clean)
+        else:
+            await update.message.reply_text(result[:1500])
         return True
 
     m = re.search(r'\[FETCH_URL:([^\]]+)\]', reply)
@@ -815,17 +1044,20 @@ async def process_commands(reply, update, uid, depth=0):
         url = m.group(1).strip()
         if clean: await update.message.reply_text(clean)
         await update.message.reply_text(f"🌐 Открываю страницу...")
-        content = fetch_url(url)
+        content = fetch_url(url, max_chars=2000)
         if depth < MAX_DEPTH:
             histories[uid].append({
                 "role": "user",
-                "content": f"[СОДЕРЖИМОЕ СТРАНИЦЫ {url}]\n{content}\n\nОтветь по существу задачи."
+                "content": (
+                    f"[СТРАНИЦА {url}]\n{content[:2000]}\n\n"
+                    "Ответь кратко и по существу задачи. Только нужная информация."
+                )
             })
             follow_up = await claude_call(uid)
             follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
             if follow_clean: await update.message.reply_text(follow_clean)
         else:
-            await update.message.reply_text(content[:4000])
+            await update.message.reply_text(content[:2000])
         return True
 
     m = re.search(r'\[EMAIL_DRAFT:(\d+):(.+)\]', reply, re.DOTALL)
@@ -1018,11 +1250,73 @@ async def process_commands(reply, update, uid, depth=0):
             if analysis_clean: await update.message.reply_text(analysis_clean)
         return True
 
+    # ─── Railway команды ───────────────────────────────
+
+    if "[RAILWAY_STATUS]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("🚂 Проверяю статус Railway...")
+        result = railway_status()
+        await update.message.reply_text(result)
+        return True
+
+    if "[RAILWAY_DEPLOY]" in reply:
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text("🚀 Запускаю redeploy Railway...")
+        result = railway_redeploy()
+        await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[RAILWAY_SET_VAR:([^:]+):([^\]]+)\]', reply)
+    if m:
+        key = m.group(1).strip()
+        value = m.group(2).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"🔧 Устанавливаю переменную {key}...")
+        result = railway_set_var(key, value)
+        await update.message.reply_text(result)
+        return True
+
+    if "[RAILWAY_GET_VARS]" in reply:
+        if clean: await update.message.reply_text(clean)
+        result = railway_get_vars()
+        await update.message.reply_text(result[:4000])
+        return True
+
+    # ─── GitHub команды ───────────────────────────────
+
+    if "[GITHUB_REPOS]" in reply:
+        if clean: await update.message.reply_text(clean)
+        result = github_list_repos()
+        await update.message.reply_text(result)
+        return True
+
+    m = re.search(r'\[GITHUB_GET:([^:]+):([^\]]+)\]', reply)
+    if m:
+        repo = m.group(1).strip() or GITHUB_REPO
+        path = m.group(2).strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"📄 Читаю файл из GitHub...")
+        result = github_get_file(repo, path)
+        for i in range(0, len(result), 4000):
+            await update.message.reply_text(result[i:i+4000])
+        return True
+
+    m = re.search(r'\[GITHUB_PUSH:([^:]+):([^:]+):(.+?)(?::([^\]]+))?\]', reply, re.DOTALL)
+    if m:
+        repo = m.group(1).strip() or GITHUB_REPO
+        path = m.group(2).strip()
+        content = m.group(3).strip()
+        commit_msg = (m.group(4) or "Update via Lilu").strip()
+        if clean: await update.message.reply_text(clean)
+        await update.message.reply_text(f"📤 Загружаю файл {path} на GitHub...")
+        result = github_push_file(repo, path, content, commit_msg)
+        await update.message.reply_text(result)
+        return True
+
     return False
 
-async def morning_digest(context):
-    """Утренний дайджест: погода, курсы, письма, цитата."""
-    uid = OWNER_ID
+async def build_digest() -> str:
+    """Собрать текст утреннего дайджеста."""
     today = datetime.date.today()
     quote = MORNING_QUOTES[today.timetuple().tm_yday % len(MORNING_QUOTES)]
     days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -1038,42 +1332,81 @@ async def morning_digest(context):
     except Exception:
         pass
 
-    # Курсы ЦБ (USD, EUR)
+    # Курсы ЦБ (USD, EUR, IDR если есть)
     rates = ""
     try:
         with httpx.Client(timeout=8) as client:
             r = client.get("https://www.cbr.ru/scripts/XML_daily.asp")
         root = ET.fromstring(r.content)
-        usd = eur = ""
+        usd = eur = idr = ""
         for v in root.findall("Valute"):
             code = v.find("CharCode").text
             val = float(v.find("Value").text.replace(",", "."))
             nom = int(v.find("Nominal").text)
             rate = val / nom
-            if code == "USD": usd = f"💵 {rate:.2f}₽"
-            elif code == "EUR": eur = f"💶 {rate:.2f}₽"
-        rates = "  ".join(filter(None, [usd, eur]))
+            if code == "USD": usd = f"💵 USD {rate:.2f}₽"
+            elif code == "EUR": eur = f"💶 EUR {rate:.2f}₽"
+            elif code == "IDR":
+                rate_k = val / nom * 1000
+                idr = f"🇮🇩 IDR {rate_k:.4f}₽/1000"
+        rates = "  ".join(filter(None, [usd, eur, idr]))
     except Exception:
         pass
+
+    # Топ новости (Tavily)
+    news_lines = []
+    if TAVILY_API_KEY:
+        news_queries = [
+            ("🌍 Мир", "world news today top headlines"),
+            ("🇮🇩 Бали", "Bali Indonesia news today"),
+            ("📈 Бизнес", "business investment news today"),
+        ]
+        for emoji_label, q in news_queries:
+            try:
+                with httpx.Client(timeout=10) as client:
+                    r = client.post(
+                        "https://api.tavily.com/search",
+                        json={"api_key": TAVILY_API_KEY, "query": q,
+                              "max_results": 3, "search_depth": "basic",
+                              "topic": "news", "days": 3}
+                    )
+                data = r.json()
+                items = data.get("results", [])[:3]
+                if items:
+                    news_lines.append(f"\n{emoji_label}:")
+                    for it in items:
+                        title = re.sub(r'\s+', ' ', it.get('title', '')).strip()[:120]
+                        news_lines.append(f"• {title}")
+                else:
+                    logger.warning(f"Tavily digest '{q}': no results. Response: {str(data)[:200]}")
+            except Exception as e:
+                logger.warning(f"Tavily digest '{q}' error: {e}")
 
     # Новые письма
     email_part = ""
     try:
-        emails_text = get_emails(uid, limit=3)
+        emails_text = get_emails(OWNER_ID, limit=3)
         if "📭" not in emails_text and "⚠️" not in emails_text:
-            email_part = emails_text[:600]
+            email_part = emails_text[:500]
     except Exception:
         pass
 
     lines = [f"☀️ Доброе утро, Сергей Сергеевич!\n📅 {day_str}"]
     if weather: lines.append(f"🌤 {weather}")
     if rates: lines.append(rates)
+    if news_lines: lines.append("\n".join(news_lines))
     lines.append(f"\n💬 «{quote}»")
-    if email_part: lines.append(f"\n{email_part}")
+    if email_part: lines.append(f"\n📬 Почта:\n{email_part}")
     else: lines.append("\n📭 Новых писем нет.")
+    return "\n".join(lines)
 
+
+async def morning_digest(context):
+    """Утренний дайджест — запускается по расписанию."""
     try:
-        await context.bot.send_message(chat_id=uid, text="\n".join(lines))
+        text = await build_digest()
+        await context.bot.send_message(chat_id=OWNER_ID, text=text)
+        logger.info("Утренний дайджест отправлен.")
     except Exception as e:
         logger.error(f"Morning digest error: {e}")
 
@@ -1143,6 +1476,17 @@ async def mode_cmd(update, ctx):
     ]])
     cur = "голосовой" if voice_mode.get(uid) else "текстовый"
     await update.message.reply_text(f"Текущий режим: {cur}.", reply_markup=kb)
+
+async def digest_cmd(update, ctx):
+    """Ручной запуск утреннего дайджеста — /digest"""
+    if not is_owner(update.effective_user.id):
+        return
+    await update.message.reply_text("⏳ Собираю дайджест...")
+    try:
+        text = await build_digest()
+        await update.message.reply_text(text)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка дайджеста: {e}")
 
 async def clear_cmd(update, ctx):
     histories.pop(update.effective_user.id, None)
@@ -1250,6 +1594,7 @@ async def main_async():
     app.add_handler(CommandHandler("mode", mode_cmd))
     app.add_handler(CommandHandler("mail", mail_cmd))
     app.add_handler(CommandHandler("memory", memory_cmd))
+    app.add_handler(CommandHandler("digest", digest_cmd))
     app.add_handler(CallbackQueryHandler(set_mode, pattern="^mode_"))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
