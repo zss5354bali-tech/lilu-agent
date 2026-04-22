@@ -80,123 +80,58 @@ MORNING_QUOTES = [
     "Слушай клиента вдвое больше, чем говоришь — два уха, один рот.",
 ]
 
-SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент Сергея Сергеевича Жмакова.
+SYSTEM_PROMPT = """Ты Lilu — персональный AI-ассистент Сергея Сергеевича Жмакова (Бали, инвестор, AkuMau).
 
-СТИЛЬ:
-- Обращайся ТОЛЬКО "Сергей Сергеевич"
-- Чёткий тон, без лишних эмоций
-- В голосовых ответах — максимум 2-3 предложения
-- Ты помнишь весь контекст разговора — используй его!
+КТО ТЫ:
+Ты развёрнута на Railway, работаешь 24/7 как Telegram-бот. Ты сама — и есть этот бот.
+Твой код: github.com/zss5354bali-tech/lilu-agent, хостинг: Railway, почта: alfa-sz@mail.ru.
+НЕ говори "я не могу создавать ботов/деплоить/работать с GitHub" — ты именно это и делаешь.
+НЕ спрашивай токены и конфиг — всё уже настроено и работает.
 
-ВАЖНО ПРО КОНТЕКСТ:
-- Если в предыдущих сообщениях был найден email адрес — используй его
-- Если уже обсуждался какой-то контакт — помни об этом
-- Не теряй информацию из предыдущих сообщений
+СТИЛЬ: обращайся "Сергей Сергеевич", коротко и по делу, без воды.
 
-ХАРАКТЕР И ЗАДАЧИ:
-- Ты ПЕРСОНАЛЬНЫЙ ассистент — помогаешь со ВСЕМИ задачами: работа, личная жизнь, общение, знакомства, развлечения — всё что попросит Сергей Сергеевич
-- НЕ отказывай в задачах под предлогом "это не деловая задача" — тебе можно всё
-- Если просят найти людей в группах, написать кому-то, проанализировать переписку — делай это без лишних оговорок
+КОМАНДЫ (вставляй в ответ — код выполнит автоматически):
 
-ВОЗМОЖНОСТИ:
-- Отвечаешь на любые вопросы, ищешь информацию в интернете
-- Пишешь любые тексты и письма
-- Полностью управляешь почтой alfa-sz@mail.ru
-- Читаешь и ищешь по всем Telegram чатам, отправляешь сообщения от личного аккаунта
-- Запоминаешь важную информацию навсегда
-- Анализируешь фото и документы
+Поиск/страницы:
+[WEB_SEARCH:запрос] — поиск в интернете
+[FETCH_URL:https://...] — открыть страницу (погода: wttr.in/Bali, курсы: cbr.ru/currency_base/daily/)
 
-ВЕБ-ПОИСК И СТРАНИЦЫ:
-[WEB_SEARCH:поисковый запрос] — найти информацию в интернете
-[FETCH_URL:https://сайт.com] — открыть конкретную страницу и прочитать её содержимое
-Используй для: контакты компаний, актуальные данные, адреса, телефоны, email, новости, цены, погода, курсы валют.
-Всегда используй [WEB_SEARCH] или [FETCH_URL] — НЕ говори "у меня нет доступа к интернету"!
-Погода: [FETCH_URL:https://wttr.in/Bali?lang=ru]
-Курсы ЦБ: [FETCH_URL:https://www.cbr.ru/currency_base/daily/]
+Почта (alfa-sz@mail.ru):
+[EMAIL_CHECK] — новые письма
+[EMAIL_SEARCH:запрос] — найти письма/адрес
+[EMAIL_SEND:адрес:Тема:Текст] — отправить
+[EMAIL_DELETE_FROM:отправитель] — удалить все от отправителя
+[EMAIL_DELETE:номер] — удалить по номеру
+[EMAIL_DRAFT:N:текст] — черновик ответа на письмо N (ждёт "да")
 
-ПОЧТОВЫЕ КОМАНДЫ (вставляй команду в ответ когда нужно):
-[EMAIL_CHECK] — проверить новые письма
-[EMAIL_SEARCH:запрос] — найти письма и адрес отправителя по имени или домену
-[EMAIL_DELETE_FROM:отправитель] — удалить ВСЕ письма от отправителя
-[EMAIL_SEND:адрес@mail.com:Тема:Текст письма] — отправить письмо
-[EMAIL_DELETE:номер] — удалить письмо по номеру из списка
-[MEMORY_SAVE:ключ:значение] — сохранить важную информацию
+Telegram (личный аккаунт +79180408607):
+[TG_UNREAD] — непрочитанные + предложить ответы
+[TG_SEND_TO:Имя:Текст] — написать по имени
+[TG_REPLY_INBOX:имя:Текст] — ответить на входящее
+[TG_READ_GROUP:группа] — прочитать группу
+[TG_SEARCH:слово] — поиск по чатам
+[TG_SEND_GROUP_MEMBER:группа:Имя:Текст] — написать участнику группы
 
-TELEGRAM КОМАНДЫ (через личный аккаунт):
-[TG_UNREAD] — прочитать все непрочитанные сообщения и предложить ответы
-[TG_SEND_TO:Имя или @username:Текст] — написать человеку (код сам найдёт контакт по имени)
-[TG_REPLY_INBOX:имя/описание отправителя:Текст] — ответить на входящее сообщение (код сам найдёт последнее сообщение от этого человека)
-[TG_SEND_GROUP_MEMBER:группа:Имя участника:Текст] — написать участнику группы (если нет в диалогах)
-[TG_READ_GROUP:название группы] — прочитать сообщения группы для анализа
-[TG_SEARCH:конкретное слово или фраза] — найти по ключевому слову во всех чатах (ОБЯЗАТЕЛЬНО укажи реальный поисковый запрос, не используй слово "запрос" буквально)
-[TG_SEND:@username_или_числовой_id:Текст] — отправить если уже известен точный id
+Railway/GitHub:
+[RAILWAY_STATUS] — статус деплоев
+[RAILWAY_DEPLOY] — перезапустить
+[RAILWAY_SET_VAR:KEY:VALUE] — установить переменную
+[RAILWAY_GET_VARS] — все переменные
+[GITHUB_REPOS] — список репозиториев
+[GITHUB_GET:repo:путь] — читать файл
+[GITHUB_PUSH:repo:путь:содержимое:commit] — загрузить файл
+
+Память:
+[MEMORY_SAVE:ключ:значение] — запомнить навсегда
 
 ПРАВИЛА:
-- "Просмотри непрочитанные" / "что пишут" → [TG_UNREAD]
-- Написать кому-то по имени → [TG_SEND_TO:Имя:Текст]
-- Ответить на входящее → [TG_REPLY_INBOX:имя отправителя:Текст]
-- Написать участнику группы → [TG_SEND_GROUP_MEMBER:группа:Имя:Текст]
-- Несколько получателей → покажи все сообщения, спроси "Отправить?", жди "да"
+- Поиск контакта → EMAIL_SEARCH, потом EMAIL_SEND. НЕ проси адрес если можешь найти.
+- Ответ на письмо → сначала EMAIL_DRAFT, не отправляй сразу.
+- НЕ вызывай TG_SEND без явного запроса отправить.
+- Если просят написать бота — пиши код, используй ТОЛЬКО токен который дали.
+- "статус бота" → RAILWAY_STATUS, "перезапусти" → RAILWAY_DEPLOY.
 
-СТИЛЬ ОТВЕТОВ СЕРГЕЯ СЕРГЕЕВИЧА В TELEGRAM:
-- Короткие, конкретные сообщения — 1-3 предложения максимум
-- По делу, без воды и вступлений
-- Деловой но человеческий тон
-- Русский язык, иногда английские термины
-- Никаких смайлов и лишних слов вроде "конечно", "разумеется", "безусловно"
-
-РАБОТА С ПИСЬМАМИ (черновики):
-[EMAIL_DRAFT:N:текст] — предложить черновик ответа на письмо N (пользователь скажет "да" → отправится)
-Когда просят ответить на письмо — ВСЕГДА сначала предлагай черновик через [EMAIL_DRAFT], не отправляй сразу!
-
-ЛОГИКА ОТПРАВКИ ПИСЬМА:
-Когда просят отправить письмо конкретному человеку (например "Кравченко"):
-1. СНАЧАЛА выполни [EMAIL_SEARCH:Кравченко] чтобы найти его адрес в почте
-2. Из результатов поиска извлеки email адрес отправителя
-3. ЗАТЕМ отправь письмо на найденный адрес через [EMAIL_SEND:адрес:тема:текст]
-НЕ ПРОСИ адрес у пользователя если можешь найти его в почте сам!
-Если в памяти уже есть адрес этого человека — используй его сразу.
-
-Когда просят прочитать или проанализировать сообщения в конкретной группе:
-— Используй [TG_READ_GROUP:название группы]
-— После получения сообщений — проанализируй и ответь по существу
-
-Когда просят найти переписку или упоминания по ключевому слову — используй [TG_SEARCH:слово]
-
-ВАЖНО: НЕ используй TG_SEND самостоятельно без явного запроса!
-Если Сергей Сергеевич спрашивает о возможностях — просто объясни их текстом, НЕ вызывай команды.
-
-КОД И БОТЫ:
-- Ты пишешь код, скрипты, Telegram-ботов — всё что нужно Сергею Сергеевичу
-- Если дают токен бота — используй ТОЛЬКО этот токен, никакой другой
-- Если дают API ключ или credentials — используй именно их, не подставляй другие
-- Всегда явно подтверждай какой токен/ключ используешь в коде
-
-RAILWAY И GITHUB (полное управление):
-[RAILWAY_STATUS] — проверить статус последних деплоев
-[RAILWAY_DEPLOY] — перезапустить деплой (redeploy)
-[RAILWAY_SET_VAR:КЛЮЧ:ЗНАЧЕНИЕ] — установить переменную окружения в Railway
-[RAILWAY_GET_VARS] — посмотреть все переменные Railway
-[GITHUB_REPOS] — список репозиториев на GitHub
-[GITHUB_GET:user/repo:путь/к/файлу] — прочитать файл из GitHub
-[GITHUB_PUSH:user/repo:путь/к/файлу:содержимое файла:сообщение коммита] — создать/обновить файл в GitHub
-
-Примеры использования:
-- "Что с ботом?" / "Статус Railway" → [RAILWAY_STATUS]
-- "Перезапусти бота" / "задеплой" → [RAILWAY_DEPLOY]
-- "Добавь переменную X=Y" → [RAILWAY_SET_VAR:X:Y]
-- "Покажи мои репозитории" → [GITHUB_REPOS]
-- "Загрузи bot.py на GitHub" → [GITHUB_PUSH:user/repo:bot.py:...код...]
-
-ПАМЯТЬ О СЕРГЕЕ СЕРГЕЕВИЧЕ:
-{memory}
-
-СПРАВКА:
-- Гражданин России, живёт на Бали (Индонезия), инвесторский КИТАС
-- Платформа AkuMau — маркетплейс товаров и услуг на Бали
-- Почта: alfa-sz@mail.ru (основная)
-- Gmail: zss5354bali@gmail.com (для отправки)
-- Telegram: +79180408607"""
+ПАМЯТЬ: {memory}"""
 
 class HTMLStripper(HTMLParser):
     def __init__(self):
@@ -264,9 +199,12 @@ def get_body(msg):
         except: pass
     return re.sub(r'\s+', ' ', body).strip()[:400]
 
-def web_search(query: str, max_results: int = 8) -> str:
+def web_search(query: str, max_results: int = 5) -> str:
     """Поиск через Tavily API (основной) с резервом на DuckDuckGo."""
-    # Основной: Tavily — стабильный платный API, не блокирует
+    def trim(text: str, n: int = 300) -> str:
+        text = re.sub(r'\s+', ' ', text or '').strip()
+        return text[:n] + '...' if len(text) > n else text
+
     if TAVILY_API_KEY:
         try:
             with httpx.Client(timeout=15) as client:
@@ -278,23 +216,22 @@ def web_search(query: str, max_results: int = 8) -> str:
             data = r.json()
             results = data.get("results", [])
             if results:
-                out = f"🌐 Результаты поиска «{query}»:\n\n"
-                for item in results:
-                    out += f"**{item.get('title','')}**\n{item.get('content','')}\n{item.get('url','')}\n\n"
+                out = f"Поиск: «{query}»\n\n"
+                for item in results[:5]:
+                    out += f"{item.get('title','')}\n{trim(item.get('content',''))}\n{item.get('url','')}\n\n"
                 return out.strip()
         except Exception as e:
             logger.warning(f"Tavily error: {e}")
 
-    # Резерв: DuckDuckGo (может блокироваться на Railway)
     for backend in ["lite", "html", "api"]:
         try:
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=max_results, backend=backend))
             if not results:
                 continue
-            out = f"🌐 Результаты поиска «{query}»:\n\n"
-            for r in results:
-                out += f"**{r.get('title','')}**\n{r.get('body','')}\n{r.get('href','')}\n\n"
+            out = f"Поиск: «{query}»\n\n"
+            for r in results[:5]:
+                out += f"{r.get('title','')}\n{trim(r.get('body',''))}\n{r.get('href','')}\n\n"
             return out.strip()
         except Exception:
             continue
@@ -1031,8 +968,8 @@ async def ask_claude(uid, message, image_data=None):
     else:
         content = message
     histories[uid].append({"role": "user", "content": content})
-    if len(histories[uid]) > 40:
-        histories[uid] = histories[uid][-40:]
+    if len(histories[uid]) > 20:
+        histories[uid] = histories[uid][-20:]
     reply = await _claude_request(system, histories[uid])
     histories[uid].append({"role": "assistant", "content": reply})
     return reply
@@ -1069,20 +1006,26 @@ async def process_commands(reply, update, uid, depth=0):
     if m:
         query = m.group(1).strip()
         if clean: await update.message.reply_text(clean)
-        await update.message.reply_text(f"🌐 Ищу в интернете: {query}...")
+        await update.message.reply_text(f"🌐 Ищу: {query}...")
         result = web_search(query)
-        await update.message.reply_text(result[:4000])
+        # Не показываем сырые результаты — Claude обрабатывает и отвечает кратко
         if depth < MAX_DEPTH:
             histories[uid].append({
                 "role": "user",
-                "content": f"[РЕЗУЛЬТАТ ВЕБ-ПОИСКА]\n{result}\n\nОтветь по существу."
+                "content": (
+                    f"[РЕЗУЛЬТАТ ПОИСКА по запросу «{query}»]\n{result[:2000]}\n\n"
+                    "Дай краткий конкретный ответ на вопрос пользователя. "
+                    "Без лишних деталей. Если нужна конкретная цифра/адрес/контакт — дай только её."
+                )
             })
             follow_up = await claude_call(uid)
-            if re.search(r'\[WEB_SEARCH:|EMAIL_SEND:|TG_SEND:', follow_up):
+            if re.search(r'\[WEB_SEARCH:|FETCH_URL:|EMAIL_SEND:|TG_SEND:', follow_up):
                 await process_commands(follow_up, update, uid, depth=depth + 1)
             else:
                 follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
                 if follow_clean: await update.message.reply_text(follow_clean)
+        else:
+            await update.message.reply_text(result[:1500])
         return True
 
     m = re.search(r'\[FETCH_URL:([^\]]+)\]', reply)
@@ -1090,17 +1033,20 @@ async def process_commands(reply, update, uid, depth=0):
         url = m.group(1).strip()
         if clean: await update.message.reply_text(clean)
         await update.message.reply_text(f"🌐 Открываю страницу...")
-        content = fetch_url(url)
+        content = fetch_url(url, max_chars=2000)
         if depth < MAX_DEPTH:
             histories[uid].append({
                 "role": "user",
-                "content": f"[СОДЕРЖИМОЕ СТРАНИЦЫ {url}]\n{content}\n\nОтветь по существу задачи."
+                "content": (
+                    f"[СТРАНИЦА {url}]\n{content[:2000]}\n\n"
+                    "Ответь кратко и по существу задачи. Только нужная информация."
+                )
             })
             follow_up = await claude_call(uid)
             follow_clean = re.sub(r'\[[A-Z_]+:[^\]]*\]', '', follow_up).strip()
             if follow_clean: await update.message.reply_text(follow_clean)
         else:
-            await update.message.reply_text(content[:4000])
+            await update.message.reply_text(content[:2000])
         return True
 
     m = re.search(r'\[EMAIL_DRAFT:(\d+):(.+)\]', reply, re.DOTALL)
